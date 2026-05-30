@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 logger = logging.getLogger(__name__)
 
 # Get the base URL from environment variable or use default
-base = os.getenv('BEETS_BASE_URL', 'plex-ts:8337')
+base = os.getenv('BEETS_BASE_URL', 'ai2:8337')
 user_agent = 'beets_monitor/0.0.1 ( REDACTED )'
 
 backoff_base = 2
