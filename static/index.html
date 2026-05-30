@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Beets Monitor - Music Catalog</title>
+    <link rel="stylesheet" href="index.css">
+    <link rel="icon" href="favicon.png">
+</head>
+<body>
+    <div class="catalog-container">
+        <div class="header">
+            <h1>Beets Monitor - Music Catalog</h1>
+            <div class="track-stats" id="trackStats"></div>
+            <div class="button-group">
+                <button class="update-btn" onclick="updateCatalog()">Update Catalog</button>
+            </div>
+        </div>
+
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('catalog')">Catalog</button>
+            <button class="tab-btn" onclick="switchTab('watched')">Watched Albums</button>
+        </div>
+
+        <div id="loading" class="loading">Loading catalog...</div>
+        <div id="error" class="error" style="display: none;"></div>
+        <div id="toast-container"></div>
+
+        <div id="catalogTab" class="tab-content active">
+            <ul id="artistList" class="artist-list"></ul>
+        </div>
+
+        <div id="watchedTab" class="tab-content">
+            <ul id="watchedList" class="watched-list"></ul>
+        </div>
+    </div>
+
+    <script src="index.js"></script>
+</body>
+</html>

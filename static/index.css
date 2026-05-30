@@ -1,0 +1,492 @@
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    margin: 0;
+    padding: 20px;
+    background-color: #121212;
+    color: #e0e0e0;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+h1 {
+    color: #e0e0e0;
+    font-size: 28px;
+    margin: 0;
+}
+
+/* Tab styles */
+.tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    border-bottom: 2px solid #333;
+    padding-bottom: 10px;
+}
+
+.tab-btn {
+    background-color: #2a2a2a;
+    color: #e0e0e0;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s;
+}
+
+.tab-btn:hover {
+    background-color: #3498db;
+}
+
+.tab-btn.active {
+    background-color: #3498db;
+    color: white;
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+.update-btn, .import-btn, .dropdown-btn {
+    background-color: #3498db;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s;
+}
+
+.update-btn:hover, .dropdown-btn:hover {
+    background-color: #2980b9;
+}
+
+.dropdown-arrow {
+    margin-left: 8px;
+    font-size: 12px;
+    transition: transform 0.3s;
+}
+
+.dropdown-btn:hover .dropdown-arrow {
+    transform: rotate(180deg);
+}
+
+/* Dropdown styles */
+.dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.dropdown-content {
+    display: none;
+    position: absolute;
+    background-color: #2a2a2a;
+    min-width: 160px;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.3);
+    border-radius: 5px;
+    z-index: 1;
+    margin-top: 5px;
+}
+
+.dropdown-content a {
+    color: #e0e0e0;
+    padding: 12px 16px;
+    text-decoration: none;
+    display: block;
+    transition: background-color 0.2s;
+}
+
+.dropdown-content a:hover {
+    background-color: #3498db;
+}
+
+.dropdown-content.show {
+    display: block;
+}
+
+.loading {
+    text-align: center;
+    padding: 20px;
+    font-style: italic;
+    color: #7f8c8d;
+}
+
+.error {
+    color: #e74c3c;
+    padding: 15px;
+    background-color: #2d2d2d;
+    border-radius: 5px;
+    margin-bottom: 20px;
+}
+
+.catalog-container {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.release-status {
+    display: inline;
+}
+
+.artist-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.artist-item {
+    background-color: #1e1e1e;
+    border-radius: 8px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+    margin-bottom: 15px;
+    overflow: hidden;
+    transition: transform 0.2s;
+}
+
+.artist-item:hover {
+    transform: translateY(-2px);
+}
+
+.artist-header {
+    padding: 15px 20px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #333;
+}
+
+.artist-header:hover {
+    background-color: #2a2a2a;
+}
+
+.artist-name {
+    font-weight: bold;
+    font-size: 18px;
+    color: #e0e0e0;
+}
+
+.artist-content {
+    padding: 20px;
+    display: none;
+    background-color: #1e1e1e;
+}
+
+.artist-content.active {
+    display: block;
+}
+
+.release-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.release-item {
+    background-color: #2a2a2a;
+    border-radius: 6px;
+    padding: 12px 15px;
+    margin-bottom: 10px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.release-item:hover {
+    background-color: #333;
+}
+
+.release-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.release-title {
+    font-weight: bold;
+    color: #3498db;
+}
+
+.release-content {
+    padding: 15px;
+    margin-top: 10px;
+    display: none;
+    background-color: #1e1e1e;
+    border-radius: 4px;
+}
+
+.release-content.active {
+    display: block;
+}
+
+.track-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.track-item {
+    padding: 8px 5px;
+    border-bottom: 1px solid #333;
+    display: flex;
+    justify-content: space-between;
+}
+
+.track-item:last-child {
+    border-bottom: none;
+}
+
+.track-name {
+    font-size: 14px;
+    color: #e0e0e0;
+}
+
+.status-missing {
+    color: #e74c3c;
+}
+
+.status-partial {
+    color: #f39c12;
+}
+
+.status-available, .status-complete {
+    color: #27ae60;
+}
+
+.status-missing-row {
+    border-left: 4px solid #e74c3c;
+}
+
+.status-partial-row {
+    border-left: 4px solid #f39c12;
+}
+
+.status-available-row, .status-complete-row {
+    border-left: 4px solid #27ae60;
+}
+
+.remove-btn {
+    background-color: transparent;
+    border: none;
+    color: #e74c3c;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: bold;
+    padding: 0 5px;
+    transition: color 0.3s;
+}
+
+.remove-btn:hover {
+    color: #c0392b;
+}
+
+.star-btn {
+    background-color: transparent;
+    border: none;
+    color: #7f8c8d;
+    cursor: pointer;
+    font-size: 18px;
+    padding: 0 5px;
+    transition: color 0.3s;
+}
+
+.star-btn:hover {
+    color: #f39c12;
+}
+
+.star-btn.watched {
+    color: #f39c12;
+}
+
+.tooltip {
+    position: relative;
+    display: inline-block;
+}
+
+.tooltip .tooltiptext {
+    visibility: hidden;
+    width: 120px;
+    background-color: #333;
+    color: #fff;
+    text-align: center;
+    border-radius: 6px;
+    padding: 5px;
+    position: absolute;
+    z-index: 1;
+    bottom: 125%;
+    left: 50%;
+    margin-left: -60px;
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+.tooltip:hover .tooltiptext {
+    visibility: visible;
+    opacity: 1;
+}
+
+.tooltip .tooltiptext::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    margin-left: -5px;
+    border-width: 5px;
+    border-style: solid;
+    border-color: #333 transparent transparent transparent;
+}
+
+/* Watched albums list styles */
+.watched-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.watched-item {
+    background-color: #1e1e1e;
+    border-radius: 8px;
+    margin-bottom: 10px;
+    overflow: hidden;
+    transition: transform 0.2s;
+}
+
+.watched-item:hover {
+    transform: translateY(-2px);
+}
+
+.watched-item.status-missing-row {
+    border-left: 4px solid #e74c3c;
+}
+
+.watched-item.status-partial-row {
+    border-left: 4px solid #f39c12;
+}
+
+.watched-item.status-complete-row {
+    border-left: 4px solid #27ae60;
+}
+
+.watched-header {
+    padding: 15px 20px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #333;
+}
+
+.watched-header:hover {
+    background-color: #2a2a2a;
+}
+
+ .watched-album-title {
+    font-size: 18px;
+    font-weight: bold;
+ }
+
+.watched-content {
+    padding: 15px;
+    margin-top: 10px;
+    display: none;
+    background-color: #1e1e1e;
+    border-radius: 4px;
+    margin-left: 20px;
+}
+
+.watched-content.active {
+    display: block;
+}
+
+@media (max-width: 768px) {
+    .artist-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 5px;
+    }
+
+    .release-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 5px;
+    }
+
+    .watched-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+}
+
+/* Toast notification styles */
+#toast-container {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.toast {
+    background-color: #2a2a2a;
+    color: #e0e0e0;
+    padding: 15px 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    min-width: 250px;
+    max-width: 400px;
+    animation: slideIn 0.3s ease-out;
+    border-left: 4px solid #3498db;
+}
+
+.toast.success {
+    border-left-color: #27ae60;
+}
+
+.toast.error {
+    border-left-color: #e74c3c;
+}
+
+.toast.warning {
+    border-left-color: #f39c12;
+}
+
+.toast-message {
+    font-size: 14px;
+    line-height: 1.4;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes fadeOut {
+    from {
+        opacity: 1;
+    }
+    to {
+        opacity: 0;
+    }
+}
+
+.toast.fade-out {
+    animation: fadeOut 0.3s ease-out forwards;
+}

@@ -1,0 +1,308 @@
+import logging
+import sys
+
+# Configure logging BEFORE importing Flask to ensure our settings take precedence
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+
+# Filter to suppress logging for health endpoint
+class HealthEndpointFilter(logging.Filter):
+    def filter(self, record):
+        if hasattr(record, 'msg') and isinstance(record.msg, str):
+            if '/health' in record.msg:
+                return False
+        return True
+
+# Apply filter to werkzeug logger before Flask initializes it
+werkzeug_logger = logging.getLogger('werkzeug')
+werkzeug_logger.addFilter(HealthEndpointFilter())
+
+from flask import Flask, jsonify, send_from_directory, request
+from datetime import datetime
+import os
+
+# Import the module functions directly from the catalog module
+from catalog import (
+    generate_artists,
+    generate_release_groups,
+    generate_albums,
+    update_current_catalog,
+    load_current_catalog,
+    ignore_album,
+    catalog_stats,
+    load_watch_albums,
+    add_watch_album,
+    remove_watch_album,
+)
+
+app = Flask(__name__, static_folder='static')
+
+# Suppress werkzeug logging entirely by setting level to WARNING
+werkzeug_logger = logging.getLogger('werkzeug')
+werkzeug_logger.setLevel(logging.WARNING)
+
+# Discord webhook URL - set via environment variable
+DISCORD_WEBHOOK_URL = os.environ.get(
+    'DISCORD_WEBHOOK_URL',
+    'https://discord.com/api/webhooks/REDACTED/REDACTED',
+)
+
+# Add CORS support for API endpoints
+@app.after_request
+def add_cors_headers(response):
+    """Add CORS headers to all responses"""
+    if request.path.startswith('/api/') or request.path in ['/get_catalog', '/update_catalog', '/health', '/ignore_album', '/import', '/update', '/bad', '/watch_albums', '/watch_albums/<album_id>']:
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    return response
+
+@app.route('/')
+def serve_index():
+    """Serve the main HTML page"""
+    return send_from_directory('static', 'index.html')
+
+@app.route('/<path:filename>')
+def serve_static(filename):
+    """Serve static files from the static directory"""
+    return send_from_directory('static', filename)
+
+@app.route('/update_catalog', methods=['POST'])
+def update_catalog():
+    """Update the catalog by running all generation functions"""
+    try:
+        # Run all catalog generation functions
+        generate_artists()
+        generate_release_groups()
+        generate_albums()
+
+        # Generate and save current catalog
+        catalog = update_current_catalog()
+        total_tracks, available_tracks = catalog_stats(catalog)
+
+        return jsonify({
+            'status': 'success',
+            'message': 'Catalog updated successfully',
+            'timestamp': datetime.now().isoformat(),
+            'total_tracks': total_tracks,
+            'available_tracks': available_tracks,
+            'catalog': catalog,
+        }), 200
+
+    except Exception as e:
+        app.logger.error(f'Exception in /update_catalog: {e}', exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/get_catalog', methods=['GET'])
+def get_catalog():
+    """Get the current catalog from disk with track counts at top level"""
+    try:
+        catalog = load_current_catalog()
+        total_tracks, available_tracks = catalog_stats(catalog)
+
+        return jsonify({
+            'status': 'success',
+            'catalog': catalog,
+            'total_tracks': total_tracks,
+            'available_tracks': available_tracks,
+            'timestamp': datetime.now().isoformat()
+        }), 200
+
+    except FileNotFoundError:
+        return jsonify({
+            'status': 'error',
+            'message': 'Catalog file not found',
+            'timestamp': datetime.now().isoformat()
+        }), 404
+
+    except Exception as e:
+        app.logger.error(f'Exception in /get_catalog: {e}', exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/ignore_album', methods=['POST'])
+def ignore_album_endpoint():
+    """Ignore an album by adding it to ignored_release_groups.json and removing it from albums.json"""
+    try:
+        data = request.get_json()
+        album_id = data.get('album_id')
+
+        if not album_id:
+            return jsonify({
+                'status': 'error',
+                'message': 'album_id is required',
+                'timestamp': datetime.now().isoformat()
+            }), 400
+
+        try:
+            ignore_album(album_id)
+        except Exception as e:
+            app.logger.error(f'Exception in ignore_album for album_id {album_id}: {e}', exc_info=True)
+            return jsonify({
+                'status': 'error',
+                'message': str(e),
+                'timestamp': datetime.now().isoformat()
+            }), 500
+
+        return jsonify({
+            'status': 'success',
+            'message': 'Album ignored successfully',
+            'timestamp': datetime.now().isoformat()
+        }), 200
+
+    except Exception as e:
+        app.logger.error(f'Exception in /ignore_album: {e}', exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/health', methods=['GET'])
+def health():
+    """Health check endpoint"""
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat()
+    }), 200
+
+# Watch Albums CRUD Endpoints
+
+@app.route('/watch_albums', methods=['GET'])
+def get_watch_albums():
+    """Get all watch albums (list of album IDs)"""
+    try:
+        watch_albums = load_watch_albums()
+        return jsonify({
+            'status': 'success',
+            'watch_albums': watch_albums,
+            'count': len(watch_albums),
+            'timestamp': datetime.now().isoformat()
+        }), 200
+    except Exception as e:
+        app.logger.error(f'Exception in /watch_albums GET: {e}', exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/watch_albums/<album_id>', methods=['GET'])
+def get_watch_album(album_id):
+    """Check if a specific album is in the watch list"""
+    try:
+        watch_albums = load_watch_albums()
+        
+        if album_id not in watch_albums:
+            return jsonify({
+                'status': 'error',
+                'message': f'Album {album_id} not found in watch list',
+                'timestamp': datetime.now().isoformat()
+            }), 404
+        
+        return jsonify({
+            'status': 'success',
+            'watched': True,
+            'album_id': album_id,
+            'timestamp': datetime.now().isoformat()
+        }), 200
+    except Exception as e:
+        app.logger.error(f'Exception in /watch_albums/{album_id} GET: {e}', exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/watch_albums', methods=['POST'])
+def create_watch_album():
+    """Add a new album to the watch list"""
+    try:
+        data = request.get_json()
+        album_id = data.get('album_id')
+        
+        if not album_id:
+            return jsonify({
+                'status': 'error',
+                'message': 'album_id is required',
+                'timestamp': datetime.now().isoformat()
+            }), 400
+        
+        try:
+            add_watch_album(album_id)
+        except ValueError as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e),
+                'timestamp': datetime.now().isoformat()
+            }), 400
+        except Exception as e:
+            app.logger.error(f'Exception in add_watch_album for album_id {album_id}: {e}', exc_info=True)
+            return jsonify({
+                'status': 'error',
+                'message': str(e),
+                'timestamp': datetime.now().isoformat()
+            }), 500
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Album added to watch list successfully',
+            'album_id': album_id,
+            'timestamp': datetime.now().isoformat()
+        }), 201
+        
+    except Exception as e:
+        app.logger.error(f'Exception in /watch_albums POST: {e}', exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/watch_albums/<album_id>', methods=['DELETE'])
+def delete_watch_album(album_id):
+    """Remove an album from the watch list"""
+    try:
+        try:
+            remove_watch_album(album_id)
+        except ValueError as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e),
+                'timestamp': datetime.now().isoformat()
+            }), 404
+        except Exception as e:
+            app.logger.error(f'Exception in remove_watch_album for album_id {album_id}: {e}', exc_info=True)
+            return jsonify({
+                'status': 'error',
+                'message': str(e),
+                'timestamp': datetime.now().isoformat()
+            }), 500
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Album removed from watch list successfully',
+            'album_id': album_id,
+            'timestamp': datetime.now().isoformat()
+        }), 200
+        
+    except Exception as e:
+        app.logger.error(f'Exception in /watch_albums/{album_id} DELETE: {e}', exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5001, debug=True)
