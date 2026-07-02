@@ -245,6 +245,8 @@ function switchTab(tabName) {
     // Load data for the selected tab
     if (tabName === 'watched') {
         loadWatchedAlbums();
+    } else if (tabName === 'web') {
+        loadArtistGraph();
     }
 }
 
@@ -894,4 +896,497 @@ async function removeRelease(albumId) {
         console.error('Error removing release:', error);
         showToast(`Error removing release: ${error.message}`, 'error');
     }
+}
+
+/* ==================== Artist Web (genre-linked ego graph) ==================== */
+/*
+ * A full 160-node force graph is an unreadable hairball, so we show a focused
+ * "ego" view: one artist in the center with only its most-alike neighbors around
+ * it. Clicking a neighbor re-centers the web on them, so you explore outward one
+ * hop at a time. All neighbor math is done client-side from the fetched edge set.
+ */
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+let artistGraph = { nodes: [], edges: [] };
+let graphNodeById = {};
+let focusArtistId = null;
+let focusHistory = [];
+let graphSim = null;
+
+async function loadArtistGraph() {
+    const empty = document.getElementById('webEmpty');
+    const svg = document.getElementById('webGraph');
+    empty.style.display = 'none';
+
+    const minShared = document.getElementById('minSharedFilter').value;
+
+    try {
+        const response = await fetch(`/artist_graph?min_shared=${minShared}`);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        if (data.status === 'error') {
+            throw new Error(data.message);
+        }
+
+        artistGraph = { nodes: data.nodes || [], edges: data.edges || [] };
+        graphNodeById = {};
+        artistGraph.nodes.forEach(n => { graphNodeById[n.id] = n; });
+
+        document.getElementById('webStats').textContent =
+            `${data.node_count} artists · ${data.edge_count} links`;
+
+        if (artistGraph.nodes.length === 0) {
+            stopGraphSim();
+            svg.innerHTML = '';
+            hideArtistPanel();
+            empty.innerHTML =
+                'No genre data yet.<br>Click <strong>“Fetch genres from MusicBrainz”</strong> to build the web.<br>' +
+                '<span style="font-size:13px;">(First run fetches one artist per second, so it may take a couple of minutes.)</span>';
+            empty.style.display = 'block';
+            return;
+        }
+
+        populateArtistDatalist();
+
+        // Keep the current focus across a refetch when possible; otherwise start
+        // from the most-connected artist so the default view is rich.
+        if (!focusArtistId || !graphNodeById[focusArtistId]) {
+            focusArtistId = highestDegreeArtist();
+            focusHistory = [];
+        }
+
+        renderGraph();
+
+    } catch (error) {
+        console.error('Error loading artist graph:', error);
+        empty.innerHTML = `Error loading artist web: ${error.message}`;
+        empty.style.display = 'block';
+    }
+}
+
+function degreeMap() {
+    const degree = {};
+    artistGraph.edges.forEach(e => {
+        degree[e.source] = (degree[e.source] || 0) + 1;
+        degree[e.target] = (degree[e.target] || 0) + 1;
+    });
+    return degree;
+}
+
+function highestDegreeArtist() {
+    const degree = degreeMap();
+    let best = artistGraph.nodes[0] ? artistGraph.nodes[0].id : null;
+    let bestDeg = -1;
+    artistGraph.nodes.forEach(n => {
+        const d = degree[n.id] || 0;
+        if (d > bestDeg) { bestDeg = d; best = n.id; }
+    });
+    return best;
+}
+
+function populateArtistDatalist() {
+    const datalist = document.getElementById('artistOptions');
+    const names = artistGraph.nodes.map(n => n.name).sort((a, b) => a.localeCompare(b));
+    datalist.innerHTML = '';
+    names.forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        datalist.appendChild(opt);
+    });
+}
+
+function onArtistSearch() {
+    const value = document.getElementById('artistSearch').value.trim().toLowerCase();
+    if (!value) return;
+    const match = artistGraph.nodes.find(n => n.name.toLowerCase() === value)
+        || artistGraph.nodes.find(n => n.name.toLowerCase().includes(value));
+    if (match) {
+        setFocus(match.id);
+    } else {
+        showToast(`No artist matching “${value}” in the web`, 'error');
+    }
+}
+
+function applyGraphFilter() {
+    // Min-shared changes the edge set, which comes from the server.
+    loadArtistGraph();
+}
+
+async function refreshArtistGenres() {
+    const empty = document.getElementById('webEmpty');
+    empty.innerHTML = 'Fetching genres from MusicBrainz… this can take a couple of minutes on first run.';
+    empty.style.display = 'block';
+    stopGraphSim();
+    document.getElementById('webGraph').innerHTML = '';
+    hideArtistPanel();
+
+    try {
+        const response = await fetch('/update_artist_genres', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        if (data.status === 'error') {
+            throw new Error(data.message);
+        }
+        showToast('Artist genres updated', 'success');
+        loadArtistGraph();
+    } catch (error) {
+        console.error('Error refreshing artist genres:', error);
+        empty.innerHTML = `Error fetching genres: ${error.message}`;
+        showToast(`Error fetching genres: ${error.message}`, 'error');
+    }
+}
+
+function stopGraphSim() {
+    if (graphSim) {
+        cancelAnimationFrame(graphSim.raf);
+        graphSim = null;
+    }
+}
+
+function setFocus(artistId, pushHistory = true) {
+    if (!graphNodeById[artistId]) return;
+    if (artistId === focusArtistId) return;
+    if (pushHistory && focusArtistId) {
+        focusHistory.push(focusArtistId);
+    }
+    focusArtistId = artistId;
+    document.getElementById('artistSearch').value = graphNodeById[artistId].name;
+    renderGraph();
+}
+
+function goBack() {
+    if (focusHistory.length === 0) return;
+    focusArtistId = focusHistory.pop();
+    document.getElementById('artistSearch').value = graphNodeById[focusArtistId].name;
+    renderGraph();
+}
+
+// All edges incident to the focus artist, ranked by shared-genre count (most alike first).
+function neighborsOf(artistId) {
+    const out = [];
+    artistGraph.edges.forEach(e => {
+        if (e.source === artistId) out.push({ id: e.target, weight: e.weight, shared: e.shared });
+        else if (e.target === artistId) out.push({ id: e.source, weight: e.weight, shared: e.shared });
+    });
+    out.sort((a, b) => b.weight - a.weight);
+    return out;
+}
+
+function renderGraph() {
+    stopGraphSim();
+    const svg = document.getElementById('webGraph');
+    svg.innerHTML = '';
+    document.getElementById('webEmpty').style.display = 'none';
+
+    if (!focusArtistId || !graphNodeById[focusArtistId]) {
+        return;
+    }
+
+    const maxNeighbors = parseInt(document.getElementById('maxNeighborsFilter').value, 10);
+    const focus = graphNodeById[focusArtistId];
+    const allNeighbors = neighborsOf(focusArtistId);
+    const shown = allNeighbors.slice(0, maxNeighbors);
+    const shownIds = new Set(shown.map(n => n.id));
+
+    const rect = svg.getBoundingClientRect();
+    const width = rect.width || 800;
+    const height = rect.height || 600;
+    const cx = width / 2;
+    const cy = height / 2;
+
+    const root = document.createElementNS(SVG_NS, 'g');
+    const edgeGroup = document.createElementNS(SVG_NS, 'g');
+    const nodeGroup = document.createElementNS(SVG_NS, 'g');
+    root.appendChild(edgeGroup);
+    root.appendChild(nodeGroup);
+    svg.appendChild(root);
+
+    const maxW = shown.length ? shown[0].weight : 1;
+    const minW = shown.length ? shown[shown.length - 1].weight : 1;
+    const Rmin = Math.min(width, height) * 0.16;
+    const Rmax = Math.min(width, height) * 0.40;
+
+    // Focus node pinned at center.
+    const focusSim = {
+        ...focus, x: cx, y: cy, vx: 0, vy: 0, fixed: true, radius: 15, isFocus: true,
+    };
+
+    // Neighbors placed radially; stronger links start closer to the center.
+    const neighborSims = shown.map((nb, i) => {
+        const node = graphNodeById[nb.id];
+        const angle = (i / Math.max(1, shown.length)) * Math.PI * 2 - Math.PI / 2;
+        const norm = maxW === minW ? 0.5 : (nb.weight - minW) / (maxW - minW);
+        const dist = Rmax - norm * (Rmax - Rmin);
+        return {
+            ...node,
+            weight: nb.weight,
+            shared: nb.shared,
+            x: cx + Math.cos(angle) * dist,
+            y: cy + Math.sin(angle) * dist,
+            vx: 0, vy: 0,
+            fixed: false,
+            radius: 7 + Math.min(10, nb.weight * 2),
+            desired: dist,
+        };
+    });
+
+    const simNodes = [focusSim, ...neighborSims];
+    const simById = {};
+    simNodes.forEach(n => { simById[n.id] = n; });
+
+    // Spokes from the focus to each shown neighbor.
+    const spokeEdges = neighborSims.map(nb => ({
+        s: focusSim, t: nb, weight: nb.weight, shared: nb.shared, kind: 'spoke',
+    }));
+
+    // Faint links among neighbors that are themselves alike, to hint at clusters.
+    const interEdges = [];
+    artistGraph.edges.forEach(e => {
+        if (shownIds.has(e.source) && shownIds.has(e.target)) {
+            interEdges.push({ s: simById[e.source], t: simById[e.target], weight: e.weight, shared: e.shared, kind: 'inter' });
+        }
+    });
+
+    const allEdges = [...interEdges, ...spokeEdges];
+
+    const edgeEls = allEdges.map(e => {
+        const line = document.createElementNS(SVG_NS, 'line');
+        line.setAttribute('class', e.kind === 'spoke' ? 'graph-edge spoke' : 'graph-edge inter');
+        line.setAttribute('stroke-width', e.kind === 'spoke' ? Math.min(4, e.weight) : 1);
+        // Show the shared genres on hover.
+        const title = document.createElementNS(SVG_NS, 'title');
+        title.textContent = `${e.s.name} ↔ ${e.t.name}: ${(e.shared || []).join(', ')}`;
+        line.appendChild(title);
+        edgeGroup.appendChild(line);
+        e.el = line;
+        return e;
+    });
+
+    const nodeEls = simNodes.map(n => {
+        const g = document.createElementNS(SVG_NS, 'g');
+        g.setAttribute('class', `graph-node status-${n.status || 'unknown'}${n.isFocus ? ' focus' : ''}`);
+        g.dataset.id = n.id;
+
+        const circle = document.createElementNS(SVG_NS, 'circle');
+        circle.setAttribute('r', n.radius);
+        g.appendChild(circle);
+
+        const label = document.createElementNS(SVG_NS, 'text');
+        label.setAttribute('dy', -n.radius - 5);
+        label.textContent = n.name + (n.isFocus ? '' : `  (${n.weight})`);
+        if (n.isFocus) label.setAttribute('class', 'focus-label');
+        g.appendChild(label);
+
+        g.addEventListener('pointerdown', ev => onNodePointerDown(ev, n));
+        nodeGroup.appendChild(g);
+        n.el = g;
+        return n;
+    });
+
+    // Light force pass (few nodes) purely to de-overlap neighbor labels.
+    const charge = -2600;
+    const spokeStrength = 0.06;
+    const interStrength = 0.02;
+    let alpha = 1;
+
+    function tick() {
+        alpha *= 0.94;
+
+        for (let i = 0; i < simNodes.length; i++) {
+            const a = simNodes[i];
+            for (let j = i + 1; j < simNodes.length; j++) {
+                const b = simNodes[j];
+                let dx = a.x - b.x, dy = a.y - b.y;
+                let dist2 = dx * dx + dy * dy || 0.01;
+                const force = (charge * alpha) / dist2;
+                const dist = Math.sqrt(dist2);
+                const fx = (dx / dist) * force, fy = (dy / dist) * force;
+                if (!a.fixed) { a.vx -= fx; a.vy -= fy; }
+                if (!b.fixed) { b.vx += fx; b.vy += fy; }
+            }
+        }
+
+        spokeEdges.forEach(e => {
+            const dx = e.t.x - e.s.x, dy = e.t.y - e.s.y;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
+            const k = (dist - e.t.desired) * spokeStrength * alpha;
+            const fx = (dx / dist) * k, fy = (dy / dist) * k;
+            if (!e.t.fixed) { e.t.vx -= fx; e.t.vy -= fy; }
+        });
+
+        interEdges.forEach(e => {
+            const dx = e.t.x - e.s.x, dy = e.t.y - e.s.y;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
+            const k = (dist - 90) * interStrength * alpha;
+            const fx = (dx / dist) * k, fy = (dy / dist) * k;
+            if (!e.s.fixed) { e.s.vx += fx; e.s.vy += fy; }
+            if (!e.t.fixed) { e.t.vx -= fx; e.t.vy -= fy; }
+        });
+
+        simNodes.forEach(n => {
+            if (!n.fixed) {
+                n.vx *= 0.8; n.vy *= 0.8;
+                n.x += n.vx; n.y += n.vy;
+            }
+            n.el.setAttribute('transform', `translate(${n.x},${n.y})`);
+        });
+
+        edgeEls.forEach(e => {
+            e.el.setAttribute('x1', e.s.x); e.el.setAttribute('y1', e.s.y);
+            e.el.setAttribute('x2', e.t.x); e.el.setAttribute('y2', e.t.y);
+        });
+
+        if (alpha > 0.02) {
+            graphSim.raf = requestAnimationFrame(tick);
+        }
+    }
+
+    graphSim = {
+        raf: 0,
+        nodes: simNodes,
+        transform: { x: 0, y: 0, k: 1 },
+        root,
+        reheat() { alpha = Math.max(alpha, 0.4); },
+    };
+    graphSim.raf = requestAnimationFrame(tick);
+
+    setupGraphInteractions(svg, root);
+    showArtistPanel(focusArtistId, allNeighbors);
+}
+
+// ---- Pan / zoom + node dragging ----
+
+function setupGraphInteractions(svg, root) {
+    const t = graphSim.transform;
+
+    function applyTransform() {
+        root.setAttribute('transform', `translate(${t.x},${t.y}) scale(${t.k})`);
+    }
+    applyTransform();
+
+    graphSim.toGraphCoords = (ev) => {
+        const rect = svg.getBoundingClientRect();
+        return {
+            x: (ev.clientX - rect.left - t.x) / t.k,
+            y: (ev.clientY - rect.top - t.y) / t.k,
+        };
+    };
+
+    let panning = false;
+    let panStart = null;
+    svg.addEventListener('pointerdown', ev => {
+        if (ev.target.closest('.graph-node')) return;
+        panning = true;
+        panStart = { x: ev.clientX - t.x, y: ev.clientY - t.y };
+        svg.classList.add('panning');
+    });
+    window.addEventListener('pointermove', ev => {
+        if (!panning) return;
+        t.x = ev.clientX - panStart.x;
+        t.y = ev.clientY - panStart.y;
+        applyTransform();
+    });
+    window.addEventListener('pointerup', () => {
+        panning = false;
+        svg.classList.remove('panning');
+    });
+
+    svg.addEventListener('wheel', ev => {
+        ev.preventDefault();
+        const rect = svg.getBoundingClientRect();
+        const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+        const scale = ev.deltaY < 0 ? 1.1 : 1 / 1.1;
+        const newK = Math.max(0.3, Math.min(4, t.k * scale));
+        t.x = mx - ((mx - t.x) * newK) / t.k;
+        t.y = my - ((my - t.y) * newK) / t.k;
+        t.k = newK;
+        applyTransform();
+    }, { passive: false });
+}
+
+function onNodePointerDown(ev, node) {
+    ev.stopPropagation();
+    node.fixed = true;
+    let moved = false;
+    const startFixed = node.isFocus;
+
+    function move(e) {
+        moved = true;
+        const p = graphSim.toGraphCoords(e);
+        node.x = p.x; node.y = p.y;
+        node.vx = 0; node.vy = 0;
+        node.el.setAttribute('transform', `translate(${node.x},${node.y})`);
+        if (graphSim) graphSim.reheat();
+    }
+    function up() {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        node.fixed = startFixed;
+        // A click (no drag) on a neighbor re-centers the web on them.
+        if (!moved && !node.isFocus) setFocus(node.id);
+    }
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+}
+
+// ---- Detail panel ----
+
+function showArtistPanel(artistId, allNeighbors) {
+    const panel = document.getElementById('artistPanel');
+    const node = graphNodeById[artistId];
+    if (!node) return;
+
+    const statusLabel = node.status || 'unknown';
+    const genreChips = (node.genres || [])
+        .map(g => `<span class="genre-chip">${escapeHtml(g)}</span>`)
+        .join('');
+
+    const similarItems = allNeighbors.length
+        ? allNeighbors.map(s => {
+            const nb = graphNodeById[s.id];
+            const name = nb ? nb.name : s.id;
+            const dotStatus = nb ? (nb.status || 'unknown') : 'unknown';
+            return `<li onclick="setFocus('${escapeAttr(s.id)}')" title="Shared: ${escapeAttr((s.shared || []).join(', '))}">
+                <span class="similar-name"><span class="legend-dot status-${dotStatus}-dot"></span>${escapeHtml(name)}</span>
+                <span class="similar-count">${s.weight} shared</span>
+            </li>`;
+        }).join('')
+        : '<li style="cursor:default;">No linked artists at this threshold</li>';
+
+    const backBtn = focusHistory.length
+        ? `<button class="panel-back" onclick="goBack()">← Back</button>` : '';
+
+    panel.innerHTML = `
+        ${backBtn}
+        <h3>${escapeHtml(node.name)}</h3>
+        <div class="panel-status status-${statusLabel}">${statusLabel} in library</div>
+        <div class="panel-section-title">Genres</div>
+        <div class="genre-chips">${genreChips || '<span style="color:#777;">None</span>'}</div>
+        <div class="panel-section-title">Most alike (${allNeighbors.length})</div>
+        <ul class="similar-list">${similarItems}</ul>
+    `;
+    panel.style.display = 'block';
+}
+
+function hideArtistPanel() {
+    const panel = document.getElementById('artistPanel');
+    if (panel) panel.style.display = 'none';
+}
+
+function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, c =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function escapeAttr(str) {
+    return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
 }

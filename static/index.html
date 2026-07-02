@@ -20,6 +20,7 @@
         <div class="tabs">
             <button class="tab-btn active" onclick="switchTab('catalog')">Catalog</button>
             <button class="tab-btn" onclick="switchTab('watched')">Watched Albums</button>
+            <button class="tab-btn" onclick="switchTab('web')">Artist Web</button>
         </div>
 
         <div id="loading" class="loading">Loading catalog...</div>
@@ -32,6 +33,49 @@
 
         <div id="watchedTab" class="tab-content">
             <ul id="watchedList" class="watched-list"></ul>
+        </div>
+
+        <div id="webTab" class="tab-content">
+            <div class="web-toolbar">
+                <div class="web-controls">
+                    <label class="web-filter">
+                        Artist:
+                        <input id="artistSearch" class="artist-search" list="artistOptions"
+                               placeholder="Search an artist…" onfocus="this.value=''" onchange="onArtistSearch()">
+                        <datalist id="artistOptions"></datalist>
+                    </label>
+                    <label class="web-filter">
+                        Min shared:
+                        <select id="minSharedFilter" onchange="applyGraphFilter()">
+                            <option value="1">1</option>
+                            <option value="2" selected>2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                        </select>
+                    </label>
+                    <label class="web-filter">
+                        Neighbors:
+                        <select id="maxNeighborsFilter" onchange="renderGraph()">
+                            <option value="8">8</option>
+                            <option value="12" selected>12</option>
+                            <option value="16">16</option>
+                            <option value="24">24</option>
+                        </select>
+                    </label>
+                    <button class="update-btn" onclick="refreshArtistGenres()">Fetch genres from MusicBrainz</button>
+                </div>
+                <div class="web-legend">
+                    <span class="legend-item"><span class="legend-dot status-complete-dot"></span>Complete</span>
+                    <span class="legend-item"><span class="legend-dot status-partial-dot"></span>Partial</span>
+                    <span class="legend-item"><span class="legend-dot status-missing-dot"></span>Missing</span>
+                    <span class="web-stats" id="webStats"></span>
+                </div>
+            </div>
+            <div id="webEmpty" class="web-empty" style="display: none;"></div>
+            <div class="web-graph-wrap">
+                <svg id="webGraph" class="web-graph"></svg>
+                <div id="artistPanel" class="artist-panel" style="display: none;"></div>
+            </div>
         </div>
     </div>
 

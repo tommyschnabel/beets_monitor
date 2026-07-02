@@ -36,6 +36,8 @@ from catalog import (
     load_watch_albums,
     add_watch_album,
     remove_watch_album,
+    generate_artist_genres,
+    build_artist_graph,
 )
 
 app = Flask(__name__, static_folder='static')
@@ -54,7 +56,7 @@ DISCORD_WEBHOOK_URL = os.environ.get(
 @app.after_request
 def add_cors_headers(response):
     """Add CORS headers to all responses"""
-    if request.path.startswith('/api/') or request.path in ['/get_catalog', '/update_catalog', '/health', '/ignore_album', '/import', '/update', '/bad', '/watch_albums', '/watch_albums/<album_id>']:
+    if request.path.startswith('/api/') or request.path in ['/get_catalog', '/update_catalog', '/health', '/ignore_album', '/import', '/update', '/bad', '/watch_albums', '/watch_albums/<album_id>', '/artist_graph', '/update_artist_genres']:
         response.headers['Access-Control-Allow-Origin'] = '*'
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
@@ -162,6 +164,70 @@ def ignore_album_endpoint():
 
     except Exception as e:
         app.logger.error(f'Exception in /ignore_album: {e}', exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/artist_graph', methods=['GET'])
+def artist_graph():
+    """Return the genre-linked artist web (nodes + weighted shared-genre edges).
+
+    Reads from cached genre data on disk; no live MusicBrainz calls. Use the
+    optional `min_shared` query param (default 2) to tune edge density.
+    """
+    try:
+        try:
+            min_shared = int(request.args.get('min_shared', 2))
+        except (TypeError, ValueError):
+            min_shared = 2
+
+        graph = build_artist_graph(min_shared=min_shared)
+
+        return jsonify({
+            'status': 'success',
+            'nodes': graph['nodes'],
+            'edges': graph['edges'],
+            'node_count': len(graph['nodes']),
+            'edge_count': len(graph['edges']),
+            'timestamp': datetime.now().isoformat()
+        }), 200
+
+    except Exception as e:
+        app.logger.error(f'Exception in /artist_graph: {e}', exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/update_artist_genres', methods=['POST'])
+def update_artist_genres():
+    """Fetch/refresh per-artist genres from MusicBrainz and return the rebuilt graph.
+
+    Respects the 45-day per-artist refresh cooldown unless `force` is passed in the
+    JSON body. This can be slow on first run (~1 req/sec per un-cached artist).
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        force = bool(data.get('force', False))
+
+        generate_artist_genres(force=force)
+        graph = build_artist_graph()
+
+        return jsonify({
+            'status': 'success',
+            'message': 'Artist genres updated successfully',
+            'nodes': graph['nodes'],
+            'edges': graph['edges'],
+            'node_count': len(graph['nodes']),
+            'edge_count': len(graph['edges']),
+            'timestamp': datetime.now().isoformat()
+        }), 200
+
+    except Exception as e:
+        app.logger.error(f'Exception in /update_artist_genres: {e}', exc_info=True)
         return jsonify({
             'status': 'error',
             'message': str(e),

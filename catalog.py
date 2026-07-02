@@ -87,6 +87,33 @@ def load_current_catalog():
         logger.error(f'Failed to load current_catalog.json: {e}', exc_info=True)
         return {}
 
+def load_artist_genres():
+    """Load cached per-artist genre data from artist_genres.json.
+
+    Returns:
+        Dict keyed by artist MBID: {artist_id: {'name', 'genres': [{'name','count'}], 'fetched': ts}}
+    """
+    try:
+        with open('./config/artist_genres.json', 'r') as f:
+            lines = ''.join(f.readlines())
+            return json.loads(lines)
+    except FileNotFoundError:
+        logger.info('artist_genres.json not found, returning empty dict')
+        return {}
+    except Exception as e:
+        logger.error(f'Failed to load artist_genres.json: {e}', exc_info=True)
+        return {}
+
+def save_artist_genres(artist_genres):
+    """Save per-artist genre data to artist_genres.json."""
+    try:
+        with open('./config/artist_genres.json', 'w') as f:
+            f.write(json.dumps(artist_genres))
+        logger.info(f'Saved genres for {len(artist_genres)} artists to disk')
+    except Exception as e:
+        logger.error(f'Failed to save artist_genres.json: {e}', exc_info=True)
+        raise
+
 def load_beets_items():
     """Load beets items from the beets_items.json file
 
@@ -356,6 +383,130 @@ def generate_albums():
     
     duration = time.time() - start_time
     logger.info(f'Generated albums: {len(albums)} albums found in {duration:.2f}s')
+
+def generate_artist_genres(force=False):
+    """Fetch and cache the genre list for each catalog artist from MusicBrainz.
+
+    Uses the curated `genres` field (a vetted subset of free-form tags), keyed by
+    artist MBID. Respects a 45-day refresh cooldown per artist (unless force=True)
+    and the 1 req/sec rate limit via get_with_backoff, mirroring generate_release_groups.
+    """
+    start_time = time.time()
+    artists = load_artists()
+    artist_genres = load_artist_genres()
+
+    refresh_cooldown = (datetime.now() + timedelta(days=-45)).timestamp()
+    logger.info(f'Starting genre generation for {len(artists)} artists')
+
+    fetched_count = 0
+    for artist_id, artist_name in artists.items():
+        if not artist_id:
+            continue
+
+        # Respect refresh cooldown unless forced
+        if not force and artist_id in artist_genres:
+            last_fetched = artist_genres[artist_id].get('fetched', 0)
+            if last_fetched > refresh_cooldown:
+                continue
+
+        logger.info(f'Requesting genres for {artist_name}')
+        resp = get_with_backoff(f'https://musicbrainz.org/ws/2/artist/{artist_id}?inc=genres&fmt=json')
+
+        if resp.status_code > 299:
+            logger.error(f'Genre request failed for {artist_name} ({artist_id}): {resp.text}')
+            continue
+
+        data = resp.json()
+        genres = [
+            {'name': g['name'], 'count': g.get('count', 0)}
+            for g in sorted(data.get('genres', []), key=lambda g: -g.get('count', 0))
+        ]
+
+        artist_genres[artist_id] = {
+            'name': artist_name,
+            'genres': genres,
+            'fetched': datetime.now().timestamp(),
+        }
+        fetched_count += 1
+        logger.info(f'Got {len(genres)} genres for {artist_name}')
+
+        save_artist_genres(artist_genres)
+
+    duration = time.time() - start_time
+    logger.info(f'Generated artist genres: refreshed {fetched_count} artists in {duration:.2f}s')
+    return artist_genres
+
+def build_artist_graph(min_shared=2):
+    """Build a genre-linked artist graph from cached genre data.
+
+    Nodes are catalog artists that have at least one genre. Edges connect two
+    artists that share genres, weighted by the number of shared genres. Only edges
+    with weight >= min_shared are returned to avoid a hairball from ubiquitous
+    genres like "rock"; any node left with no such edge keeps its single strongest
+    (weight >= 1) link so it is not stranded. Node status is pulled from the current
+    catalog when available for coloring.
+    """
+    start_time = time.time()
+    artist_genres = load_artist_genres()
+    current_catalog = load_current_catalog()
+
+    # Build nodes and a genre-name-set per artist for fast intersection.
+    nodes = []
+    genre_sets = {}
+    for artist_id, info in artist_genres.items():
+        genre_names = [g['name'] for g in info.get('genres', [])]
+        if not genre_names:
+            continue
+        genre_sets[artist_id] = set(genre_names)
+        status = current_catalog.get(artist_id, {}).get('status', 'unknown')
+        nodes.append({
+            'id': artist_id,
+            'name': info.get('name', artist_id),
+            'genres': genre_names,
+            'status': status,
+        })
+
+    # Compute weighted edges from shared genres over all artist pairs.
+    artist_ids = list(genre_sets.keys())
+    edges = []
+    best_edge = {}  # artist_id -> (weight, edge) strongest weight>=1 link, for stranded nodes
+    connected = set()
+
+    for i in range(len(artist_ids)):
+        a = artist_ids[i]
+        for j in range(i + 1, len(artist_ids)):
+            b = artist_ids[j]
+            shared = genre_sets[a] & genre_sets[b]
+            weight = len(shared)
+            if weight == 0:
+                continue
+
+            edge = {'source': a, 'target': b, 'weight': weight, 'shared': sorted(shared)}
+
+            # Track each node's strongest link as a fallback against stranding.
+            for node_id in (a, b):
+                if node_id not in best_edge or weight > best_edge[node_id][0]:
+                    best_edge[node_id] = (weight, edge)
+
+            if weight >= min_shared:
+                edges.append(edge)
+                connected.add(a)
+                connected.add(b)
+
+    # Rescue stranded nodes by adding their single strongest link.
+    for node in nodes:
+        node_id = node['id']
+        if node_id in connected or node_id not in best_edge:
+            continue
+        edge = best_edge[node_id][1]
+        if edge not in edges:
+            edges.append(edge)
+        connected.add(edge['source'])
+        connected.add(edge['target'])
+
+    duration = time.time() - start_time
+    logger.info(f'Built artist graph: {len(nodes)} nodes, {len(edges)} edges in {duration:.2f}s')
+    return {'nodes': nodes, 'edges': edges}
 
 def ignore_album(album_id):
     try:
