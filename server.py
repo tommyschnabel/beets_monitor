@@ -38,6 +38,7 @@ from catalog import (
     remove_watch_album,
     generate_artist_genres,
     build_artist_graph,
+    build_playlists,
 )
 
 app = Flask(__name__, static_folder='static')
@@ -56,7 +57,7 @@ DISCORD_WEBHOOK_URL = os.environ.get(
 @app.after_request
 def add_cors_headers(response):
     """Add CORS headers to all responses"""
-    if request.path.startswith('/api/') or request.path in ['/get_catalog', '/update_catalog', '/health', '/ignore_album', '/import', '/update', '/bad', '/watch_albums', '/watch_albums/<album_id>', '/artist_graph', '/update_artist_genres']:
+    if request.path.startswith('/api/') or request.path in ['/get_catalog', '/update_catalog', '/health', '/ignore_album', '/import', '/update', '/bad', '/watch_albums', '/watch_albums/<album_id>', '/artist_graph', '/update_artist_genres', '/create_playlist']:
         response.headers['Access-Control-Allow-Origin'] = '*'
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
@@ -196,6 +197,48 @@ def artist_graph():
 
     except Exception as e:
         app.logger.error(f'Exception in /artist_graph: {e}', exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/create_playlist', methods=['POST'])
+def create_playlist():
+    """Build M3U8 playlists (Plex + Strawberry path variants) from a set of artists.
+
+    Expects JSON {"artist_ids": [mbid, ...], "name": "<playlist name>"}. Writes
+    /playlists/plex/<name>.m3u8 and /playlists/strawberry/<name>.m3u8 containing
+    every song in the beets library by those artists.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        artist_ids = data.get('artist_ids') or []
+        name = (data.get('name') or '').strip()
+
+        if not artist_ids:
+            return jsonify({
+                'status': 'error',
+                'message': 'No artists provided',
+                'timestamp': datetime.now().isoformat()
+            }), 400
+        if not name:
+            return jsonify({
+                'status': 'error',
+                'message': 'Playlist name is required',
+                'timestamp': datetime.now().isoformat()
+            }), 400
+
+        result = build_playlists(artist_ids, name)
+
+        return jsonify({
+            'status': 'success',
+            **result,
+            'timestamp': datetime.now().isoformat()
+        }), 200
+
+    except Exception as e:
+        app.logger.error(f'Exception in /create_playlist: {e}', exc_info=True)
         return jsonify({
             'status': 'error',
             'message': str(e),

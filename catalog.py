@@ -508,6 +508,122 @@ def build_artist_graph(min_shared=2):
     logger.info(f'Built artist graph: {len(nodes)} nodes, {len(edges)} edges in {duration:.2f}s')
     return {'nodes': nodes, 'edges': edges}
 
+def fetch_beets_items():
+    """Fetch the raw list of items from the Beets web API.
+
+    Unlike get_current_catalog(), this does no full-catalog building - it just
+    returns the items. Requires the beets web plugin to be configured with
+    include_paths: yes so each item carries its `path`.
+    """
+    resp = requests.get(f'http://{base}/item/')
+    return resp.json()['items']
+
+# Beets returns item paths RELATIVE to its music directory (e.g.
+# "Artist/Album (Year)/track.mp3"). The same files live on disk at
+# /music/library; Plex (and beets) see them at /music, while
+# Strawberry runs natively on the host and sees the raw host path. We prepend
+# the consumer-appropriate prefix to the relative path.
+PLEX_MUSIC_PREFIX = '/music'
+STRAWBERRY_MUSIC_PREFIX = '/music/library'
+PLAYLIST_DIR = '/playlists'
+
+def to_playlist_path(item_path, prefix):
+    """Join a beets item path onto a consumer prefix.
+
+    Beets normally returns a relative path, but tolerate an absolute /music/...
+    path too by stripping that prefix first.
+    """
+    rel = item_path
+    if rel.startswith(PLEX_MUSIC_PREFIX + '/'):
+        rel = rel[len(PLEX_MUSIC_PREFIX) + 1:]
+    rel = rel.lstrip('/')
+    return f'{prefix}/{rel}'
+
+def sanitize_filename(name):
+    """Turn an arbitrary playlist name into a safe single-path-segment filename."""
+    # Drop path separators and control characters, collapse whitespace.
+    cleaned = re.sub(r'[/\\\x00-\x1f]', ' ', name)
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    # Avoid names that are all dots or empty.
+    cleaned = cleaned.strip('.').strip()
+    return cleaned or 'playlist'
+
+def build_playlists(artist_ids, name):
+    """Build two M3U8 playlists (Plex + Strawberry path variants) of every song
+    by the given artists, and write them to /playlists/{plex,strawberry}/.
+
+    Args:
+        artist_ids: iterable of artist MBIDs (graph node ids == mb_albumartistid).
+        name: playlist name (auto-derived from the focused artist on the frontend).
+
+    Returns:
+        dict with name, track_count, artist_count, plex_path, strawberry_path.
+    """
+    start_time = time.time()
+    wanted = set(artist_ids)
+    items = fetch_beets_items()
+
+    selected = []
+    for item in items:
+        artist_id = item.get('mb_albumartistid') or item.get('mb_artistid')
+        if artist_id not in wanted:
+            continue
+        if not item.get('path'):
+            continue
+        selected.append(item)
+
+    # Keep albums together and in track order.
+    def sort_key(item):
+        return (
+            (item.get('albumartist') or item.get('artist') or '').lower(),
+            (item.get('album') or '').lower(),
+            item.get('disc') or 0,
+            item.get('track') or 0,
+        )
+    selected.sort(key=sort_key)
+
+    found_artists = {
+        (item.get('mb_albumartistid') or item.get('mb_artistid')) for item in selected
+    }
+
+    def build_lines(prefix):
+        lines = ['#EXTM3U']
+        for item in selected:
+            path = to_playlist_path(item['path'], prefix)
+            duration = int(item.get('length') or 0)
+            artist = item.get('artist') or item.get('albumartist') or ''
+            title = item.get('title') or ''
+            lines.append(f'#EXTINF:{duration},{artist} - {title}')
+            lines.append(path)
+        return '\n'.join(lines) + '\n'
+
+    safe_name = sanitize_filename(name)
+    plex_dir = os.path.join(PLAYLIST_DIR, 'plex')
+    strawberry_dir = os.path.join(PLAYLIST_DIR, 'strawberry')
+    os.makedirs(plex_dir, exist_ok=True)
+    os.makedirs(strawberry_dir, exist_ok=True)
+
+    plex_path = os.path.join(plex_dir, f'{safe_name}.m3u8')
+    strawberry_path = os.path.join(strawberry_dir, f'{safe_name}.m3u8')
+
+    with open(plex_path, 'w', encoding='utf-8') as f:
+        f.write(build_lines(PLEX_MUSIC_PREFIX))
+    with open(strawberry_path, 'w', encoding='utf-8') as f:
+        f.write(build_lines(STRAWBERRY_MUSIC_PREFIX))
+
+    duration = time.time() - start_time
+    logger.info(
+        f'Built playlist "{safe_name}": {len(selected)} tracks from '
+        f'{len(found_artists)} artists in {duration:.2f}s'
+    )
+    return {
+        'name': safe_name,
+        'track_count': len(selected),
+        'artist_count': len(found_artists),
+        'plex_path': plex_path,
+        'strawberry_path': strawberry_path,
+    }
+
 def ignore_album(album_id):
     try:
         ignored_release_groups = load_ignored_release_groups()

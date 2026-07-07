@@ -63,6 +63,7 @@
                         </select>
                     </label>
                     <button class="update-btn" onclick="refreshArtistGenres()">Fetch genres from MusicBrainz</button>
+                    <button class="update-btn" onclick="createPlaylist()">Create playlist</button>
                 </div>
                 <div class="web-legend">
                     <span class="legend-item"><span class="legend-dot status-complete-dot"></span>Complete</span>
@@ -75,6 +76,27 @@
             <div class="web-graph-wrap">
                 <svg id="webGraph" class="web-graph"></svg>
                 <div id="artistPanel" class="artist-panel" style="display: none;"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="playlistModal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <button class="modal-close" onclick="closePlaylistModal()" title="Close">×</button>
+            <h3>Create playlist</h3>
+            <label class="modal-field-label" for="playlistName">Playlist name</label>
+            <input type="text" id="playlistName" class="modal-input" autocomplete="off">
+            <div class="panel-section-title">
+                Artists (<span id="playlistArtistCount">0</span> selected)
+                <span class="modal-select-actions">
+                    <button type="button" class="modal-link-btn" onclick="togglePlaylistArtists(true)">All</button>
+                    <button type="button" class="modal-link-btn" onclick="togglePlaylistArtists(false)">None</button>
+                </span>
+            </div>
+            <ul id="playlistArtistList" class="playlist-artist-list"></ul>
+            <div class="modal-actions">
+                <button class="update-btn modal-secondary" onclick="closePlaylistModal()">Cancel</button>
+                <button id="playlistCreateBtn" class="update-btn" onclick="confirmCreatePlaylist()">Create playlist</button>
             </div>
         </div>
     </div>

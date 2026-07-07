@@ -913,6 +913,9 @@ let graphNodeById = {};
 let focusArtistId = null;
 let focusHistory = [];
 let graphSim = null;
+// Artist ids currently drawn on the graph (focus + shown neighbors), kept in
+// sync by renderGraph() so "Create playlist" can act on exactly what's visible.
+let currentVisibleIds = [];
 
 async function loadArtistGraph() {
     const empty = document.getElementById('webEmpty');
@@ -1045,6 +1048,98 @@ async function refreshArtistGenres() {
     }
 }
 
+// Open the modal listing the currently-visible artists so they can be
+// checked/unchecked before the playlist is created.
+function createPlaylist() {
+    if (!focusArtistId || currentVisibleIds.length === 0) {
+        showToast('Open the Artist Web and focus an artist first', 'error');
+        return;
+    }
+    const focusNode = graphNodeById[focusArtistId];
+    if (!focusNode || !focusNode.name) {
+        showToast('Could not determine playlist name', 'error');
+        return;
+    }
+
+    document.getElementById('playlistName').value = `${focusNode.name} & Similar`;
+
+    // Focus artist first, then the rest in the order they're drawn.
+    const list = document.getElementById('playlistArtistList');
+    list.innerHTML = currentVisibleIds.map(id => {
+        const node = graphNodeById[id];
+        const label = node ? node.name : id;
+        const status = (node && node.status) || 'unknown';
+        return `<li onclick="if(event.target.tagName!=='INPUT'){this.querySelector('input').click();}">
+            <input type="checkbox" value="${escapeAttr(id)}" checked onchange="updatePlaylistArtistCount()">
+            <span class="legend-dot status-${status}-dot"></span>
+            <span class="artist-name">${escapeHtml(label)}</span>
+        </li>`;
+    }).join('');
+
+    updatePlaylistArtistCount();
+    document.getElementById('playlistModal').style.display = 'flex';
+}
+
+function closePlaylistModal() {
+    document.getElementById('playlistModal').style.display = 'none';
+}
+
+function togglePlaylistArtists(checked) {
+    document.querySelectorAll('#playlistArtistList input[type="checkbox"]')
+        .forEach(cb => { cb.checked = checked; });
+    updatePlaylistArtistCount();
+}
+
+function updatePlaylistArtistCount() {
+    const count = document.querySelectorAll('#playlistArtistList input[type="checkbox"]:checked').length;
+    document.getElementById('playlistArtistCount').textContent = count;
+}
+
+async function confirmCreatePlaylist() {
+    const name = document.getElementById('playlistName').value.trim();
+    if (!name) {
+        showToast('Enter a playlist name', 'error');
+        return;
+    }
+    const artistIds = Array.from(
+        document.querySelectorAll('#playlistArtistList input[type="checkbox"]:checked')
+    ).map(cb => cb.value);
+    if (artistIds.length === 0) {
+        showToast('Select at least one artist', 'error');
+        return;
+    }
+
+    const createBtn = document.getElementById('playlistCreateBtn');
+    createBtn.disabled = true;
+    createBtn.textContent = 'Creating…';
+    try {
+        const response = await fetch('/create_playlist', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ artist_ids: artistIds, name })
+        });
+        if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(errData.message || `HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        if (data.status === 'error') {
+            throw new Error(data.message);
+        }
+        closePlaylistModal();
+        showToast(
+            `Playlist “${data.name}” created: ${data.track_count} tracks from ${data.artist_count} artists`,
+            'success'
+        );
+    } catch (error) {
+        console.error('Error creating playlist:', error);
+        showToast(`Error creating playlist: ${error.message}`, 'error');
+    } finally {
+        createBtn.disabled = false;
+        createBtn.textContent = 'Create playlist';
+    }
+}
+
 function stopGraphSim() {
     if (graphSim) {
         cancelAnimationFrame(graphSim.raf);
@@ -1088,6 +1183,7 @@ function renderGraph() {
     document.getElementById('webEmpty').style.display = 'none';
 
     if (!focusArtistId || !graphNodeById[focusArtistId]) {
+        currentVisibleIds = [];
         return;
     }
 
@@ -1096,6 +1192,8 @@ function renderGraph() {
     const allNeighbors = neighborsOf(focusArtistId);
     const shown = allNeighbors.slice(0, maxNeighbors);
     const shownIds = new Set(shown.map(n => n.id));
+    // Expose exactly the drawn artists (focus + shown neighbors) for playlist creation.
+    currentVisibleIds = [focusArtistId, ...shown.map(n => n.id)];
 
     const rect = svg.getBoundingClientRect();
     const width = rect.width || 800;
