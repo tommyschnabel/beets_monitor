@@ -1,4 +1,4 @@
-FROM python:3
+FROM python:3.14.6
 
 # Install Deps
 COPY ./requirements.txt /
