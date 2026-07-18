@@ -18,6 +18,14 @@ user_agent = 'beets_monitor/0.0.1 ( REDACTED )'
 
 backoff_base = 2
 max_backoff_secs = 10
+max_attempts = 6
+
+def save_json(path, data, indent=None):
+    """Write JSON to disk atomically so a crash mid-write can't corrupt the file."""
+    tmp_path = f'{path}.tmp'
+    with open(tmp_path, 'w') as f:
+        f.write(json.dumps(data, indent=indent))
+    os.replace(tmp_path, path)
 
 def normalize_title(title):
     """Normalize a track title by removing common punctuation and extra whitespace.
@@ -107,8 +115,7 @@ def load_artist_genres():
 def save_artist_genres(artist_genres):
     """Save per-artist genre data to artist_genres.json."""
     try:
-        with open('./config/artist_genres.json', 'w') as f:
-            f.write(json.dumps(artist_genres))
+        save_json('./config/artist_genres.json', artist_genres)
         logger.info(f'Saved genres for {len(artist_genres)} artists to disk')
     except Exception as e:
         logger.error(f'Failed to save artist_genres.json: {e}', exc_info=True)
@@ -138,8 +145,7 @@ def save_beets_items(beets_items):
         beets_items: List of beets items
     """
     try:
-        with open('./config/beets_items.json', 'w') as f:
-            f.write(json.dumps(beets_items, indent=2))
+        save_json('./config/beets_items.json', beets_items, indent=2)
         logger.info(f'Saved {len(beets_items)} beets items to disk')
     except Exception as e:
         logger.error(f'Failed to save beets_items.json: {e}', exc_info=True)
@@ -169,8 +175,7 @@ def save_watch_albums(watch_albums):
         watch_albums: List of album IDs (MusicBrainz release group IDs)
     """
     try:
-        with open('./config/watch_albums.json', 'w') as f:
-            f.write(json.dumps(watch_albums, indent=2))
+        save_json('./config/watch_albums.json', watch_albums, indent=2)
         logger.info(f'Saved {len(watch_albums)} watch albums to disk')
     except Exception as e:
         logger.error(f'Failed to save watch_albums.json: {e}', exc_info=True)
@@ -235,8 +240,7 @@ def generate_artists():
 
             artists[artist_id] = artist
 
-        with open('./config/artists.json', 'w') as f:
-            f.write(json.dumps(artists))
+        save_json('./config/artists.json', artists)
         duration = time.time() - start_time
         logger.info(f'Generated artists: {len(artists)} artists found in {duration:.2f}s')
     except Exception as e:
@@ -270,13 +274,14 @@ def generate_release_groups(skip_to=''):
 
         if release_groups_resp.status_code > 299:
             logger.error(f'Request failed for {artist_name}: {release_groups_resp.text}')
-            return
+            continue
 
         for release_group in release_groups_resp.json()['release-groups']:
             title = release_group['title']
             id = release_group['id']
-            if release_group['primary-type'] == 'Album' and id not in release_groups:
-                if 'Compilation' not in release_group['secondary-types'] and 'Live' not in release_group['secondary-types']:
+            if release_group.get('primary-type') == 'Album' and id not in release_groups:
+                secondary_types = release_group.get('secondary-types') or []
+                if 'Compilation' not in secondary_types and 'Live' not in secondary_types:
                     release_groups[id] = {
                         'title': title,
                         'artist_id': artist,
@@ -286,11 +291,8 @@ def generate_release_groups(skip_to=''):
         # Update the last refresh timestamp for this artist
         artist_last_refresh[artist] = datetime.now().timestamp()
 
-        with open('./config/release_groups.json', 'w') as f:
-            f.write(json.dumps(release_groups))
-
-        with open('./config/artist_last_refresh.json', 'w') as f:
-            f.write(json.dumps(artist_last_refresh))
+        save_json('./config/release_groups.json', release_groups)
+        save_json('./config/artist_last_refresh.json', artist_last_refresh)
     
     duration = time.time() - start_time
     logger.info(f'Generated release groups: {len(release_groups)} release groups found in {duration:.2f}s')
@@ -336,8 +338,7 @@ def generate_albums():
                 'artist_id': rg_data['artist_id'],
                 'reason': 'no_earliest_release_found'
             }
-            with open('./config/ignored_release_groups.json', 'w') as f:
-                f.write(json.dumps(ignored_release_groups))
+            save_json('./config/ignored_release_groups.json', ignored_release_groups)
             continue
 
         album_id = earliest['id']
@@ -354,8 +355,7 @@ def generate_albums():
                 'artist_id': rg_data['artist_id'],
                 'reason': 'track_request_failed'
             }
-            with open('./config/ignored_release_groups.json', 'w') as f:
-                f.write(json.dumps(ignored_release_groups))
+            save_json('./config/ignored_release_groups.json', ignored_release_groups)
             continue
 
         track_data = track_resp.json()
@@ -378,8 +378,7 @@ def generate_albums():
         }
 
         logger.info(f'Got metadata for: {title} ({album_id})')
-        with open('./config/albums.json', 'w') as f:
-            f.write(json.dumps(albums))
+        save_json('./config/albums.json', albums)
     
     duration = time.time() - start_time
     logger.info(f'Generated albums: {len(albums)} albums found in {duration:.2f}s')
@@ -632,7 +631,7 @@ def ignore_album(album_id):
 
         if album_id in albums:
             albums.pop(album_id)
-        release_group = release_groups.pop(album_id)
+        release_group = release_groups.pop(album_id, None)
 
         ignored_release_groups[album_id] = {
             'artist_id': '' if release_group is None else release_group['artist_id'],
@@ -640,15 +639,10 @@ def ignore_album(album_id):
             'reason': 'ignored from UI'
         }
 
-        with open('./config/ignored_release_groups.json', 'w') as f:
-            f.write(json.dumps(ignored_release_groups))
+        save_json('./config/ignored_release_groups.json', ignored_release_groups)
+        save_json('./config/albums.json', albums)
+        save_json('./config/release_groups.json', release_groups)
 
-        with open('./config/albums.json', 'w') as f:
-            f.write(json.dumps(albums))
-
-        with open('./config/release_groups.json', 'w') as f:
-            f.write(json.dumps(release_groups))
-        
         logger.info(f'Ignored album: {album_id}')
     except Exception as e:
         logger.error(f'Failed to ignore album {album_id}: {e}', exc_info=True)
@@ -718,9 +712,13 @@ def get_current_catalog():
     # Use mb_albumartistid instead of mb_artistid to handle tracks where the track artist
     # differs from the album artist (e.g., featured artists on compilation albums)
     for item in beets_items:
-        artist_id = item.get('mb_albumartistid') or item['mb_artistid']
-        release_group_id = item['mb_releasegroupid']
+        artist_id = item.get('mb_albumartistid') or item.get('mb_artistid')
+        release_group_id = item.get('mb_releasegroupid')
         track_position = item.get('track')
+
+        # Skip items missing MusicBrainz ids (e.g. untagged imports)
+        if not artist_id or not release_group_id:
+            continue
 
         if artist_id not in tracks_by_artist_rg:
             tracks_by_artist_rg[artist_id] = {}
@@ -854,8 +852,7 @@ def update_current_catalog():
     start_time = time.time()
     try:
         current_catalog = get_current_catalog()
-        with open('./config/current_catalog.json', 'w') as f:
-            f.write(json.dumps(current_catalog))
+        save_json('./config/current_catalog.json', current_catalog)
         duration = time.time() - start_time
         logger.info(f'Updated current catalog and saved to disk in {duration:.2f}s')
         return current_catalog
@@ -868,14 +865,21 @@ def get_with_backoff(url):
     attempts = 0
     while True:
         try:
-            resp = requests.get(url)
+            resp = requests.get(url, headers={'User-Agent': user_agent}, timeout=30)
+            # MusicBrainz rate limit: 1 request per second
             time.sleep(1)
-            return resp
+            if resp.status_code not in (429, 503) or attempts + 1 >= max_attempts:
+                return resp
+            retry_after = resp.headers.get('Retry-After')
+            sleep_duration = float(retry_after) if retry_after else min(backoff_base ** attempts, max_backoff_secs)
+            logger.warning(f'Backing off: attempt={attempts + 1} sleep_secs={sleep_duration} status={resp.status_code}')
         except Exception as e:
-            sleep_duration = backoff_base ** attempts
+            if attempts + 1 >= max_attempts:
+                raise
+            sleep_duration = min(backoff_base ** attempts, max_backoff_secs)
             logger.warning(f'Backing off: attempt={attempts + 1} sleep_secs={sleep_duration} error={e}')
-            time.sleep(sleep_duration)
-            attempts += 1
+        time.sleep(sleep_duration)
+        attempts += 1
 
 def _flush_out():
     while True:

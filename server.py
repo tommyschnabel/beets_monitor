@@ -23,6 +23,7 @@ werkzeug_logger.addFilter(HealthEndpointFilter())
 from flask import Flask, jsonify, send_from_directory, request
 from datetime import datetime
 import os
+import requests
 
 # Import the module functions directly from the catalog module
 from catalog import (
@@ -47,17 +48,14 @@ app = Flask(__name__, static_folder='static')
 werkzeug_logger = logging.getLogger('werkzeug')
 werkzeug_logger.setLevel(logging.WARNING)
 
-# Discord webhook URL - set via environment variable
-DISCORD_WEBHOOK_URL = os.environ.get(
-    'DISCORD_WEBHOOK_URL',
-    'https://discord.com/api/webhooks/REDACTED/REDACTED',
-)
+# Actions dashboard base URL - used to proxy beets maintenance commands
+ACTIONS_BASE_URL = os.environ.get('ACTIONS_BASE_URL', 'http://actions_dashboard:5001')
 
 # Add CORS support for API endpoints
 @app.after_request
 def add_cors_headers(response):
     """Add CORS headers to all responses"""
-    if request.path.startswith('/api/') or request.path in ['/get_catalog', '/update_catalog', '/health', '/ignore_album', '/import', '/update', '/bad', '/watch_albums', '/watch_albums/<album_id>', '/artist_graph', '/update_artist_genres', '/create_playlist']:
+    if request.path.startswith('/api/') or request.path.startswith('/watch_albums') or request.path in ['/get_catalog', '/update_catalog', '/health', '/ignore_album', '/import', '/update', '/bad', '/artist_graph', '/update_artist_genres', '/create_playlist']:
         response.headers['Access-Control-Allow-Origin'] = '*'
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
@@ -277,6 +275,28 @@ def update_artist_genres():
             'timestamp': datetime.now().isoformat()
         }), 500
 
+# Beets maintenance commands, proxied to the actions dashboard which runs
+# `beet import/update/bad` inside the beets container and reports to Discord.
+BEETS_ACTION_PATHS = {
+    'import': '/beets/import',
+    'update': '/beets/update',
+    'bad': '/beets/bad',
+}
+
+@app.route('/<any(import, update, bad):action>', methods=['POST'])
+def beets_action(action):
+    """Forward a beets maintenance command to the actions dashboard"""
+    try:
+        resp = requests.post(f'{ACTIONS_BASE_URL}{BEETS_ACTION_PATHS[action]}', timeout=10)
+        return jsonify(resp.json()), resp.status_code
+    except Exception as e:
+        app.logger.error(f'Exception proxying /{action} to actions dashboard: {e}', exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 502
+
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint"""
@@ -414,4 +434,4 @@ def delete_watch_album(album_id):
         }), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    app.run(host='0.0.0.0', port=5001, debug=os.environ.get('FLASK_DEBUG') == '1')

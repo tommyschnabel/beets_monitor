@@ -384,8 +384,8 @@ function renderWatchedAlbums() {
         watchedItem.innerHTML = `
             <div class="watched-header" onclick="toggleWatchedAlbumExpand('${albumId}')">
                 <div class="watched-album-info">
-                    <div class="watched-album-title">${displayTitle || albumId}</div>
-                    <div class="watched-album-artist">${artistName || 'Unknown Artist'}</div>
+                    <div class="watched-album-title">${escapeHtml(displayTitle || albumId)}</div>
+                    <div class="watched-album-artist">${escapeHtml(artistName || 'Unknown Artist')}</div>
                 </div>
                 <div class="watched-album-status">
                     <div class="tooltip">
@@ -488,7 +488,7 @@ function renderWatchedTracks(albumId) {
                 trackItem.classList.add(`status-${track.status}-row`);
 
                 trackItem.innerHTML = `
-                    <span class="track-name">${track.position}. ${track.title}</span>
+                    <span class="track-name">${track.position}. ${escapeHtml(track.title)}</span>
                 `;
 
                 diskTracksContainer.appendChild(trackItem);
@@ -663,7 +663,7 @@ function renderCatalog() {
 
         artistItem.innerHTML = `
             <div class="artist-header" onclick="toggleArtist('${artistId}')">
-                <div class="artist-name">${artistData.name}</div>
+                <div class="artist-name">${escapeHtml(artistData.name)}</div>
                 <div class="artist-status">
                     ${missingAlbums > 0 ? `<span class="status-missing">${missingAlbums} missing albums</span>` : ''}
                     ${partialAlbums > 0 ? `<span class="status-partial">${partialAlbums} partial albums</span>` : ''}
@@ -761,7 +761,7 @@ function renderReleases(artistId) {
             
             releaseItem.innerHTML = `
                 <div class="release-header" onclick="toggleRelease('${artistId}', '${releaseId}')">
-                    <div class="release-title">${displayTitle}</div>
+                    <div class="release-title">${escapeHtml(displayTitle)}</div>
                     <div class="release-controls">
                         <div class="release-status">
                             ${missingTracks > 0 ? `<span class="status-missing">${missingTracks} missing songs</span>` : ''}
@@ -862,7 +862,7 @@ function renderTracks(artistId, releaseId) {
                 trackItem.classList.add(`status-${track.status}-row`);
 
                 trackItem.innerHTML = `
-                    <span class="track-name">${track.position}. ${track.title}</span>
+                    <span class="track-name">${track.position}. ${escapeHtml(track.title)}</span>
                 `;
 
                 diskTracksContainer.appendChild(trackItem);
@@ -908,6 +908,9 @@ async function removeRelease(albumId) {
         if (data.status === 'error') {
             throw new Error(data.message);
         }
+
+        showToast('Album removed from tracking', 'success');
+        loadCatalog();
 
     } catch (error) {
         console.error('Error removing release:', error);
