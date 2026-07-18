@@ -1,7 +1,20 @@
 let catalogData = null;
 let watchedAlbums = [];
 
-window.onload = loadCatalog;
+window.onload = () => {
+    loadCatalog();
+    const initialTab = location.hash.replace('#', '') || 'catalog';
+    if (['catalog', 'watched', 'web'].includes(initialTab)) {
+        switchTab(initialTab, false);
+    }
+};
+
+window.addEventListener('popstate', () => {
+    const tabName = location.hash.replace('#', '') || 'catalog';
+    if (['catalog', 'watched', 'web'].includes(tabName)) {
+        switchTab(tabName, false);
+    }
+});
 
 function showToast(message, type = 'info') {
     const container = document.getElementById('toast-container');
@@ -225,23 +238,27 @@ async function findBad() {
     }
 }
 
-function switchTab(tabName) {
+function switchTab(tabName, pushState = true) {
     // Hide all tab contents
     document.querySelectorAll('.tab-content').forEach(tab => {
         tab.classList.remove('active');
     });
-    
+
     // Remove active class from all tab buttons
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.classList.remove('active');
     });
-    
+
     // Show selected tab content
     document.getElementById(`${tabName}Tab`).classList.add('active');
-    
+
     // Add active class to selected tab button
-    event.target.classList.add('active');
-    
+    document.querySelector(`.tab-btn[data-tab="${tabName}"]`).classList.add('active');
+
+    if (pushState) {
+        history.pushState(null, '', `#${tabName}`);
+    }
+
     // Load data for the selected tab
     if (tabName === 'watched') {
         loadWatchedAlbums();
