@@ -51,11 +51,15 @@ werkzeug_logger.setLevel(logging.WARNING)
 # Actions dashboard base URL - used to proxy beets maintenance commands
 ACTIONS_BASE_URL = os.environ.get('ACTIONS_BASE_URL', 'http://actions_dashboard:5001')
 
+# slskd (Soulseek) integration - used to trigger searches from the catalog UI
+SLSKD_URL = os.environ.get('SLSKD_URL', 'http://slskd:5030')
+SLSKD_API_KEY = os.environ.get('SLSKD_API_KEY', '')
+
 # Add CORS support for API endpoints
 @app.after_request
 def add_cors_headers(response):
     """Add CORS headers to all responses"""
-    if request.path.startswith('/api/') or request.path.startswith('/watch_albums') or request.path in ['/get_catalog', '/update_catalog', '/health', '/ignore_album', '/import', '/update', '/bad', '/artist_graph', '/update_artist_genres', '/create_playlist']:
+    if request.path.startswith('/api/') or request.path.startswith('/watch_albums') or request.path in ['/get_catalog', '/update_catalog', '/health', '/ignore_album', '/import', '/update', '/bad', '/artist_graph', '/update_artist_genres', '/create_playlist', '/slskd_search']:
         response.headers['Access-Control-Allow-Origin'] = '*'
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
@@ -296,6 +300,46 @@ def beets_action(action):
             'message': str(e),
             'timestamp': datetime.now().isoformat()
         }), 502
+
+@app.route('/slskd_search', methods=['POST'])
+def slskd_search():
+    """Kick off a Soulseek search in slskd for the given query."""
+    try:
+        data = request.get_json() or {}
+        query = (data.get('query') or '').strip()
+
+        if not query:
+            return jsonify({
+                'status': 'error',
+                'message': 'query is required',
+                'timestamp': datetime.now().isoformat()
+            }), 400
+
+        headers = {'Content-Type': 'application/json'}
+        if SLSKD_API_KEY:
+            headers['X-API-Key'] = SLSKD_API_KEY
+
+        resp = requests.post(
+            f'{SLSKD_URL}/api/v0/searches',
+            json={'searchText': query},
+            headers=headers,
+            timeout=15,
+        )
+        resp.raise_for_status()
+
+        return jsonify({
+            'status': 'success',
+            'query': query,
+            'search': resp.json(),
+            'timestamp': datetime.now().isoformat()
+        }), 200
+    except Exception as e:
+        app.logger.error(f'Exception in /slskd_search: {e}', exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
 
 @app.route('/health', methods=['GET'])
 def health():

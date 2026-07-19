@@ -37,6 +37,26 @@ function showToast(message, type = 'info') {
     }, 3000);
 }
 
+async function slskdSearch(query) {
+    if (!query) return;
+    try {
+        const response = await fetch('/slskd_search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query })
+        });
+        const data = await response.json();
+        if (response.ok && data.status === 'success') {
+            showToast(`Searching slskd for "${query}"`, 'success');
+        } else {
+            showToast(`slskd search failed: ${data.message || response.statusText}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error triggering slskd search:', error);
+        showToast(`slskd search failed: ${error.message}`, 'error');
+    }
+}
+
 async function loadCatalog() {
     document.getElementById('loading').style.display = 'block';
     document.getElementById('error').style.display = 'none';
@@ -389,6 +409,10 @@ function renderWatchedAlbums() {
                 </div>
                 <div class="watched-album-status">
                     <div class="tooltip">
+                        <button class="search-btn" data-query="${escapeHtml(`${artistName || ''} ${albumTitle}`)}" onclick="event.stopPropagation(); slskdSearch(this.dataset.query)">⌕</button>
+                        <span class="tooltiptext">Search slskd for this album</span>
+                    </div>
+                    <div class="tooltip">
                         <button class="${starClass}" onclick="event.stopPropagation(); toggleWatchedAlbum('${albumId}')">${starText}</button>
                         <span class="tooltiptext">Remove from watch list</span>
                     </div>
@@ -668,6 +692,10 @@ function renderCatalog() {
                     ${missingAlbums > 0 ? `<span class="status-missing">${missingAlbums} missing albums</span>` : ''}
                     ${partialAlbums > 0 ? `<span class="status-partial">${partialAlbums} partial albums</span>` : ''}
                 </div>
+                <div class="tooltip">
+                    <button class="search-btn" data-query="${escapeHtml(artistData.name)}" onclick="event.stopPropagation(); slskdSearch(this.dataset.query)">⌕</button>
+                    <span class="tooltiptext">Search slskd for this artist</span>
+                </div>
             </div>
             <div class="artist-content" id="artist-${artistId}">
                 <ul class="release-list" id="releases-${artistId}"></ul>
@@ -766,6 +794,10 @@ function renderReleases(artistId) {
                         <div class="release-status">
                             ${missingTracks > 0 ? `<span class="status-missing">${missingTracks} missing songs</span>` : ''}
                             ${partialTracks > 0 ? `<span class="status-partial">${partialTracks} partial songs</span>` : ''}
+                        </div>
+                        <div class="tooltip">
+                            <button class="search-btn" data-query="${escapeHtml(`${artistData.name} ${releaseData.title}`)}" onclick="event.stopPropagation(); slskdSearch(this.dataset.query)">⌕</button>
+                            <span class="tooltiptext">Search slskd for this album</span>
                         </div>
                         <div class="tooltip">
                             <button class="${starClass}" onclick="event.stopPropagation(); toggleWatchedAlbum('${releaseId}')">${starText}</button>

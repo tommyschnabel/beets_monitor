@@ -180,6 +180,11 @@ h1 {
     font-weight: bold;
     font-size: 18px;
     color: #e0e0e0;
+    margin-right: auto;
+}
+
+.artist-status {
+    margin-left: 10px;
 }
 
 .artist-content {
@@ -293,6 +298,21 @@ h1 {
 
 .remove-btn:hover {
     color: #c0392b;
+}
+
+.search-btn {
+    background-color: transparent;
+    border: none;
+    color: #7f8c8d;
+    cursor: pointer;
+    font-size: 18px;
+    font-weight: bold;
+    padding: 0 5px;
+    transition: color 0.3s;
+}
+
+.search-btn:hover {
+    color: #3498db;
 }
 
 .star-btn {
