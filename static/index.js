@@ -1,4 +1,5 @@
 let catalogData = null;
+let catalogPromise = null;
 let watchedAlbums = [];
 
 window.onload = () => {
@@ -57,7 +58,12 @@ async function slskdSearch(query) {
     }
 }
 
-async function loadCatalog() {
+function loadCatalog() {
+    catalogPromise = loadCatalogInternal();
+    return catalogPromise;
+}
+
+async function loadCatalogInternal() {
     document.getElementById('loading').style.display = 'block';
     document.getElementById('error').style.display = 'none';
     document.getElementById('artistList').innerHTML = '';
@@ -293,6 +299,12 @@ async function loadWatchedAlbums() {
     document.getElementById('watchedList').innerHTML = '';
 
     try {
+        // Titles are resolved from catalogData; make sure it's loaded first
+        // (e.g. when the page opens directly on the watched tab).
+        if (!catalogData) {
+            await (catalogPromise || loadCatalog());
+        }
+
         const response = await fetch('/watch_albums');
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
