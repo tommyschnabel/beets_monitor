@@ -708,11 +708,12 @@ def get_current_catalog():
     # Create a mapping of tracks by artist and release group using track positions
     tracks_by_artist_rg = {}
 
-    # Also index every track by (artist, normalized album title, normalized track
-    # title). This lets a track that Beets already holds under a *different* release
-    # group -- e.g. a re-import that Beets flagged as a duplicate -- still count as
-    # present for the album it otherwise looks missing from.
-    beets_album_tracks_by_artist = {}
+    # Also index every track title Beets holds per artist. Beets dedupes by
+    # recording, so a track can already live under a *different* album (e.g.
+    # "The Hardest Part" filed under the EP rather than the LP it also appears
+    # on). Matching on artist + normalized title lets those still count as
+    # present for the album they otherwise look missing from.
+    beets_titles_by_artist = {}
 
     # Organize items by artist and release group
     # Use mb_albumartistid instead of mb_artistid to handle tracks where the track artist
@@ -726,13 +727,12 @@ def get_current_catalog():
         if not artist_id:
             continue
 
-        # Index by album + title regardless of release group id / position so
+        # Index by title regardless of album / release group id / position so
         # duplicate-across-albums tracks still register as present below.
-        album_title = item.get('album')
         track_title = item.get('title')
-        if album_title and track_title:
-            beets_album_tracks_by_artist.setdefault(artist_id, set()).add(
-                (normalize_title(album_title), normalize_title(track_title))
+        if track_title:
+            beets_titles_by_artist.setdefault(artist_id, set()).add(
+                normalize_title(track_title)
             )
 
         # Position-based matching still needs the release group id.
@@ -750,11 +750,11 @@ def get_current_catalog():
 
     # Add track status to the full catalog structure
     for artist_id, artist_data in full_catalog.items():
-        if artist_id not in tracks_by_artist_rg and artist_id not in beets_album_tracks_by_artist:
+        if artist_id not in tracks_by_artist_rg and artist_id not in beets_titles_by_artist:
             continue
 
-        # Tracks Beets holds for this artist, keyed by (normalized album, normalized title).
-        artist_album_tracks = beets_album_tracks_by_artist.get(artist_id, set())
+        # Normalized track titles Beets holds for this artist, across all albums.
+        artist_titles = beets_titles_by_artist.get(artist_id, set())
 
         # Initialize artist-level status tracking
         artist_has_complete = False
@@ -767,9 +767,9 @@ def get_current_catalog():
             # still recovers those tracks).
             rg_positions = tracks_by_artist_rg.get(artist_id, {}).get(release_group_id, {})
 
-            # If Beets has neither positions for this release group nor any album/title
+            # If Beets has neither positions for this release group nor any title
             # match for the artist, the album really is missing.
-            if not rg_positions and not artist_album_tracks:
+            if not rg_positions and not artist_titles:
                 rg_data['status'] = 'missing'
                 artist_all_complete = False
                 continue
@@ -781,17 +781,16 @@ def get_current_catalog():
             # If this release group has album data with disks/tracks
             if 'data' in rg_data and 'disks' in rg_data['data']:
                 mb_positions = set(rg_positions.keys())
-                album_title_norm = normalize_title(rg_data['data'].get('title', ''))
                 for disk in rg_data['data']['disks']:
                     for track_id, track_info in disk['tracks'].items():
                         track_position = track_info['position']
                         album_total_tracks += 1
 
                         # Complete if the position matches within this release group, or
-                        # if Beets already holds a track with the same album + title
-                        # (covers duplicates Beets refused to re-import into this album).
-                        title_key = (album_title_norm, normalize_title(track_info['title']))
-                        if track_position in mb_positions or title_key in artist_album_tracks:
+                        # if Beets already holds a track with the same title for this
+                        # artist (covers duplicates Beets filed under a different album).
+                        title_norm = normalize_title(track_info['title'])
+                        if track_position in mb_positions or title_norm in artist_titles:
                             track_info['status'] = 'complete'
                             album_complete_tracks += 1
                         else:
