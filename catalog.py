@@ -8,6 +8,7 @@ import time
 import logging
 
 from datetime import datetime, timedelta
+from xml.etree import ElementTree
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -526,6 +527,15 @@ PLEX_MUSIC_PREFIX = '/music'
 STRAWBERRY_MUSIC_PREFIX = '/music/library'
 PLAYLIST_DIR = '/playlists'
 
+# Plex playlist import. Plex's /playlists/upload endpoint is a silent no-op on
+# our build (returns 200, creates nothing), so we instead resolve each track's
+# path to its Plex ratingKey and create the playlist via POST /playlists. The
+# track paths use PLEX_MUSIC_PREFIX (/music), which is where Plex's music library
+# is mounted, so they match the file= attribute Plex stores for each track.
+PLEX_URL = os.getenv('PLEX_URL', 'http://plex:32400')
+PLEX_TOKEN = os.getenv('PLEX_TOKEN', '')
+PLEX_LIBRARY = os.getenv('PLEX_LIBRARY', 'Music')
+
 def to_playlist_path(item_path, prefix):
     """Join a beets item path onto a consumer prefix.
 
@@ -546,6 +556,117 @@ def sanitize_filename(name):
     # Avoid names that are all dots or empty.
     cleaned = cleaned.strip('.').strip()
     return cleaned or 'playlist'
+
+def _plex_get(path, params=None):
+    p = dict(params or {})
+    p['X-Plex-Token'] = PLEX_TOKEN
+    resp = requests.get(f'{PLEX_URL}{path}', params=p, timeout=60)
+    resp.raise_for_status()
+    return ElementTree.fromstring(resp.content)
+
+def _plex_music_section():
+    """Return the Plex library section key for PLEX_LIBRARY, or None."""
+    tree = _plex_get('/library/sections')
+    for child in tree.findall('Directory'):
+        if child.get('title') == PLEX_LIBRARY:
+            return child.get('key')
+    return None
+
+def _plex_track_map(section):
+    """Return {file_path: ratingKey} for every track in the given section.
+
+    Fetches all tracks in pages; one full pass builds the lookup we use to turn
+    m3u track paths into the ratingKeys the create-playlist call needs.
+    """
+    path_to_key = {}
+    start, size = 0, 5000
+    while True:
+        root = _plex_get(
+            f'/library/sections/{section}/all',
+            {'type': 10, 'X-Plex-Container-Start': start,
+             'X-Plex-Container-Size': size},
+        )
+        tracks = root.findall('Track')
+        for tr in tracks:
+            key = tr.get('ratingKey')
+            for part in tr.iter('Part'):
+                path_to_key[part.get('file')] = key
+        if len(tracks) < size:
+            break
+        start += size
+    return path_to_key
+
+def _plex_machine_id():
+    return _plex_get('/').get('machineIdentifier')
+
+def _plex_existing_playlists():
+    return {
+        pl.get('title'): pl.get('ratingKey')
+        for pl in _plex_get('/playlists/all').findall('Playlist')
+    }
+
+def upload_plex_playlist(title, track_paths):
+    """Create/replace a Plex audio playlist named title from track_paths.
+
+    track_paths are /music-prefixed file paths (matching Plex's stored file=
+    attribute). We resolve them to ratingKeys and POST /playlists. If a playlist
+    with the same title exists it is deleted first so we replace rather than dupe.
+    Best-effort: logs and returns False on failure so the m3u8 files still write.
+    """
+    if not PLEX_TOKEN:
+        logger.warning('PLEX_TOKEN not set; skipping Plex playlist import')
+        return False
+    try:
+        section = _plex_music_section()
+        if not section:
+            logger.warning(
+                f'Plex music library "{PLEX_LIBRARY}" not found; skipping import'
+            )
+            return False
+
+        track_map = _plex_track_map(section)
+        keys = [track_map[p] for p in track_paths if p in track_map]
+        missing = len(track_paths) - len(keys)
+        if not keys:
+            logger.warning(
+                f'Plex playlist "{title}": 0/{len(track_paths)} tracks matched; '
+                'skipping import'
+            )
+            return False
+
+        existing = _plex_existing_playlists()
+        if title in existing:
+            requests.delete(
+                f'{PLEX_URL}/playlists/{existing[title]}',
+                params={'X-Plex-Token': PLEX_TOKEN},
+                timeout=30,
+            ).raise_for_status()
+
+        machine_id = _plex_machine_id()
+        uri = (
+            f'server://{machine_id}/com.plexapp.plugins.library'
+            f'/library/metadata/{",".join(keys)}'
+        )
+        resp = requests.post(
+            f'{PLEX_URL}/playlists',
+            params={
+                'type': 'audio',
+                'title': title,
+                'smart': '0',
+                'uri': uri,
+                'X-Plex-Token': PLEX_TOKEN,
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        logger.info(
+            f'Imported Plex playlist "{title}": {len(keys)} tracks '
+            f'({missing} unmatched)'
+        )
+        return True
+    except requests.exceptions.RequestException as e:
+        logger.warning(f'Plex playlist import failed: {e}')
+        return False
 
 def build_playlists(artist_ids, name):
     """Build two M3U8 playlists (Plex + Strawberry path variants) of every song
@@ -610,6 +731,11 @@ def build_playlists(artist_ids, name):
     with open(strawberry_path, 'w', encoding='utf-8') as f:
         f.write(build_lines(STRAWBERRY_MUSIC_PREFIX))
 
+    plex_track_paths = [
+        to_playlist_path(item['path'], PLEX_MUSIC_PREFIX) for item in selected
+    ]
+    plex_imported = upload_plex_playlist(safe_name, plex_track_paths)
+
     duration = time.time() - start_time
     logger.info(
         f'Built playlist "{safe_name}": {len(selected)} tracks from '
@@ -621,6 +747,7 @@ def build_playlists(artist_ids, name):
         'artist_count': len(found_artists),
         'plex_path': plex_path,
         'strawberry_path': strawberry_path,
+        'plex_imported': plex_imported,
     }
 
 def ignore_album(album_id):
