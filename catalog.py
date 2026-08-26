@@ -13,8 +13,7 @@ from xml.etree import ElementTree
 # Configure logger
 logger = logging.getLogger(__name__)
 
-# Get the base URL from environment variable or use default
-base = os.getenv('BEETS_BASE_URL', 'ai2:8337')
+base = os.environ['BEETS_BASE_URL']
 user_agent = 'beets_monitor/0.0.1 ( REDACTED )'
 
 backoff_base = 2
@@ -523,9 +522,9 @@ def fetch_beets_items():
 # /music/library; Plex (and beets) see them at /music, while
 # Strawberry runs natively on the host and sees the raw host path. We prepend
 # the consumer-appropriate prefix to the relative path.
-PLEX_MUSIC_PREFIX = '/music'
-STRAWBERRY_MUSIC_PREFIX = '/music/library'
-PLAYLIST_DIR = '/playlists'
+PLEX_MUSIC_PREFIX = os.getenv('PLEX_MUSIC_PREFIX', '/music')
+STRAWBERRY_MUSIC_PREFIX = os.getenv('STRAWBERRY_MUSIC_PREFIX', '')
+PLAYLIST_DIR = os.getenv('PLAYLIST_DIR', '/playlists')
 
 # Plex playlist import. Plex's /playlists/upload endpoint is a silent no-op on
 # our build (returns 200, creates nothing), so we instead resolve each track's

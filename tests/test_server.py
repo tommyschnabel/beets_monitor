@@ -269,6 +269,14 @@ class TestBeetsActionProxy:
 
 
 class TestSlskdSearch:
+    @pytest.fixture(autouse=True)
+    def configured_slskd_url(self, monkeypatch):
+        monkeypatch.setattr(server, "SLSKD_URL", "http://slskd:5030")
+
+    def test_disabled_when_slskd_url_is_unset(self, client, monkeypatch):
+        monkeypatch.setattr(server, "SLSKD_URL", "")
+        assert client.post("/slskd_search", json={"query": "x"}).status_code == 501
+
     def test_starts_a_search(self, client, monkeypatch):
         seen = {}
 

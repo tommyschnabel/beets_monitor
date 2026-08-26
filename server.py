@@ -52,7 +52,7 @@ werkzeug_logger.setLevel(logging.WARNING)
 ACTIONS_BASE_URL = os.environ.get('ACTIONS_BASE_URL', 'http://actions_dashboard:5001')
 
 # slskd (Soulseek) integration - used to trigger searches from the catalog UI
-SLSKD_URL = os.environ.get('SLSKD_URL', 'http://slskd:5030')
+SLSKD_URL = os.environ.get('SLSKD_URL', '')
 SLSKD_API_KEY = os.environ.get('SLSKD_API_KEY', '')
 
 # Add CORS support for API endpoints
@@ -305,6 +305,13 @@ def beets_action(action):
 def slskd_search():
     """Kick off a Soulseek search in slskd for the given query."""
     try:
+        if not SLSKD_URL:
+            return jsonify({
+                'status': 'error',
+                'message': 'SLSKD_URL is not configured',
+                'timestamp': datetime.now().isoformat()
+            }), 501
+
         data = request.get_json() or {}
         query = (data.get('query') or '').strip()
 

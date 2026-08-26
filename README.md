@@ -8,36 +8,31 @@ A Flask-based web interface for monitoring and managing beets music library impo
 - Import music files via beets (asynchronous)
 - Update music library via beets (asynchronous)
 - Find bad music files via beets (asynchronous)
-- Discord webhook notifications for import, update, and bad files check status
+- Soulseek (slskd) search trigger from the catalog UI
+- Playlist export to Plex and Strawberry
 
-## Discord Webhook Configuration
+Import/update/bad-files checks are proxied to a separate `actions_dashboard`
+service (`ACTIONS_BASE_URL`), which is also where Discord webhook
+notifications for those actions are sent from.
 
-To receive Discord notifications when music imports complete:
+## Configuration
 
-1. **Create a Discord Webhook:**
-   - Go to your Discord server settings
-   - Navigate to **Integrations** > **Webhooks**
-   - Click **New Webhook**
-   - Name it (e.g., "Beets Import")
-   - Select the channel where you want notifications
-   - Click **Copy Webhook URL**
+Copy `.env.example` to `.env` and fill in the values for your setup:
 
-2. **Configure the Environment Variable:**
-   - Copy `.env.example` to `.env`:
-     ```bash
-     cp .env.example .env
-     ```
-   - Edit `.env` and paste your Discord webhook URL:
-     ```
-     DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN
-     ```
-   - If not set, a default webhook URL will be used
+```bash
+cp .env.example .env
+```
 
-3. **Restart the Application:**
-   - The application will now send Discord notifications when:
-     - Music import completes successfully (✅ green)
-     - Music import fails (❌ red)
-     - An exception occurs during import (❌ red)
+- `BEETS_BASE_URL` (required) - host:port of the beets web plugin API
+- `ACTIONS_BASE_URL` - base URL of the actions dashboard that runs
+  `beet import/update/bad`
+- `SLSKD_URL` / `SLSKD_API_KEY` - slskd base URL and API key; leave
+  `SLSKD_URL` unset to disable the `/slskd_search` endpoint
+- `PLEX_MUSIC_PREFIX` / `STRAWBERRY_MUSIC_PREFIX` / `PLAYLIST_DIR` - path
+  prefixes used to translate beets' relative item paths into the absolute
+  paths each playlist consumer expects
+- `PLEX_URL` / `PLEX_TOKEN` / `PLEX_LIBRARY` - Plex integration, used to
+  resolve tracks to ratingKeys for playlist export
 
 ## API Endpoints
 
