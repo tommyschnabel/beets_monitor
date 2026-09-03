@@ -14,6 +14,9 @@ from xml.etree import ElementTree
 logger = logging.getLogger(__name__)
 
 base = os.environ['BEETS_BASE_URL']
+# MusicBrainz requires a meaningful User-Agent with contact info (an email or
+# URL) - see https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting -
+# unidentifiable requests get more aggressively rate limited.
 user_agent = os.environ.get('MUSICBRAINZ_USER_AGENT', 'beets_monitor/0.0.1')
 
 backoff_base = 2
