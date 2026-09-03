@@ -14,7 +14,7 @@ from xml.etree import ElementTree
 logger = logging.getLogger(__name__)
 
 base = os.environ['BEETS_BASE_URL']
-user_agent = 'beets_monitor/0.0.1 ( REDACTED )'
+user_agent = os.environ.get('MUSICBRAINZ_USER_AGENT', 'beets_monitor/0.0.1')
 
 backoff_base = 2
 max_backoff_secs = 10
