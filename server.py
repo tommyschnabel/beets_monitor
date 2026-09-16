@@ -48,9 +48,6 @@ app = Flask(__name__, static_folder='static')
 werkzeug_logger = logging.getLogger('werkzeug')
 werkzeug_logger.setLevel(logging.WARNING)
 
-# Actions dashboard base URL - used to proxy beets maintenance commands
-ACTIONS_BASE_URL = os.environ.get('ACTIONS_BASE_URL', 'http://actions_dashboard:5001')
-
 # slskd (Soulseek) integration - used to trigger searches from the catalog UI
 SLSKD_URL = os.environ.get('SLSKD_URL', '')
 SLSKD_API_KEY = os.environ.get('SLSKD_API_KEY', '')
@@ -59,7 +56,7 @@ SLSKD_API_KEY = os.environ.get('SLSKD_API_KEY', '')
 @app.after_request
 def add_cors_headers(response):
     """Add CORS headers to all responses"""
-    if request.path.startswith('/api/') or request.path.startswith('/watch_albums') or request.path in ['/get_catalog', '/update_catalog', '/health', '/ignore_album', '/import', '/update', '/bad', '/artist_graph', '/update_artist_genres', '/create_playlist', '/slskd_search']:
+    if request.path.startswith('/api/') or request.path.startswith('/watch_albums') or request.path in ['/get_catalog', '/update_catalog', '/health', '/ignore_album', '/artist_graph', '/update_artist_genres', '/create_playlist', '/slskd_search']:
         response.headers['Access-Control-Allow-Origin'] = '*'
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
@@ -278,28 +275,6 @@ def update_artist_genres():
             'message': str(e),
             'timestamp': datetime.now().isoformat()
         }), 500
-
-# Beets maintenance commands, proxied to the actions dashboard which runs
-# `beet import/update/bad` inside the beets container and reports to Discord.
-BEETS_ACTION_PATHS = {
-    'import': '/beets/import',
-    'update': '/beets/update',
-    'bad': '/beets/bad',
-}
-
-@app.route('/<any(import, update, bad):action>', methods=['POST'])
-def beets_action(action):
-    """Forward a beets maintenance command to the actions dashboard"""
-    try:
-        resp = requests.post(f'{ACTIONS_BASE_URL}{BEETS_ACTION_PATHS[action]}', timeout=10)
-        return jsonify(resp.json()), resp.status_code
-    except Exception as e:
-        app.logger.error(f'Exception proxying /{action} to actions dashboard: {e}', exc_info=True)
-        return jsonify({
-            'status': 'error',
-            'message': str(e),
-            'timestamp': datetime.now().isoformat()
-        }), 502
 
 @app.route('/slskd_search', methods=['POST'])
 def slskd_search():

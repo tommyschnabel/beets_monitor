@@ -237,37 +237,6 @@ class TestUpdateArtistGenres:
         assert client.post("/update_artist_genres", json={}).status_code == 500
 
 
-class TestBeetsActionProxy:
-    @pytest.mark.parametrize("action", ["import", "update", "bad"])
-    def test_each_action_is_proxied_to_its_dashboard_path(self, client, monkeypatch, action):
-        seen = {}
-
-        def fake_post(url, timeout=None):
-            seen["url"] = url
-            return FakeResponse(status_code=202, payload={"status": "accepted"})
-
-        monkeypatch.setattr(server.requests, "post", fake_post)
-
-        resp = client.post(f"/{action}")
-        assert resp.status_code == 202
-        assert seen["url"] == f"{server.ACTIONS_BASE_URL}{server.BEETS_ACTION_PATHS[action]}"
-
-    def test_the_upstream_status_is_passed_through(self, client, monkeypatch):
-        monkeypatch.setattr(server.requests, "post",
-                            lambda *a, **k: FakeResponse(status_code=500, payload={"status": "error"}))
-        assert client.post("/import").status_code == 500
-
-    def test_an_unreachable_dashboard_is_a_502(self, client, monkeypatch):
-        def boom(*a, **k):
-            raise ConnectionError("no route to actions_dashboard")
-
-        monkeypatch.setattr(server.requests, "post", boom)
-        assert client.post("/import").status_code == 502
-
-    def test_an_unknown_action_is_not_routed(self, client):
-        assert client.post("/reindex").status_code in (404, 405)
-
-
 class TestSlskdSearch:
     @pytest.fixture(autouse=True)
     def configured_slskd_url(self, monkeypatch):

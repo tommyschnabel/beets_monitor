@@ -16,8 +16,6 @@ MusicBrainz to show which albums you're missing for each artist.
 - Artist graph linking artists by shared MusicBrainz genres
 - Playlist export (M3U8) for Plex and Strawberry
 - Soulseek search trigger through [slskd](https://github.com/slskd/slskd)
-- Buttons for `beet import`, `beet update` and `beet bad`, run through an
-  optional actions service (see [Actions service](#actions-service-optional))
 
 ## Requirements
 
@@ -25,7 +23,7 @@ MusicBrainz to show which albums you're missing for each artist.
   [`web` plugin](https://beets.readthedocs.io/en/stable/plugins/web.html)
   enabled and reachable from Beets Monitor. Set `BEETS_BASE_URL` to its
   `host:port`.
-- Optional: slskd, Plex, and an actions service (see below).
+- Optional: slskd and Plex.
 
 ## Quick start with Docker Compose
 
@@ -109,7 +107,6 @@ All configuration is through environment variables (see `.env.example`).
 |---|---|---|
 | `BEETS_BASE_URL` | yes | `host:port` of the beets web plugin API |
 | `MUSICBRAINZ_USER_AGENT` | recommended | User agent sent to MusicBrainz. MusicBrainz asks for contact info, so include an email or URL |
-| `ACTIONS_BASE_URL` | no | Base URL of the actions service used by `/import`, `/update` and `/bad` |
 | `SLSKD_URL` | no | slskd base URL. Leave unset to disable `/slskd_search` |
 | `SLSKD_API_KEY` | no | slskd API key |
 | `PLEX_MUSIC_PREFIX` | no | Path prefix Plex uses for your music directory |
@@ -120,20 +117,6 @@ All configuration is through environment variables (see `.env.example`).
 
 Beets returns item paths relative to its music directory. The `*_PREFIX`
 variables turn those into the absolute paths each playlist consumer expects.
-
-## Actions service (optional)
-
-Beets Monitor doesn't run beets commands itself. `POST /import`,
-`/update` and `/bad` are forwarded to `ACTIONS_BASE_URL` as:
-
-- `POST {ACTIONS_BASE_URL}/beets/import`
-- `POST {ACTIONS_BASE_URL}/beets/update`
-- `POST {ACTIONS_BASE_URL}/beets/bad`
-
-That service should run the matching `beet` command (for example with
-`docker exec` into your beets container) and return a JSON response, which
-is passed back unchanged. Without it, these endpoints return `502`. The rest
-of the app works normally.
 
 ## API endpoints
 
@@ -147,7 +130,6 @@ of the app works normally.
 | POST | `/update_artist_genres` | Refresh artist genres from MusicBrainz. Body `{"force": true}` skips the 45-day cooldown |
 | POST | `/create_playlist` | Body `{"artist_ids": [...], "name": "..."}`. Writes Plex and Strawberry M3U8 files |
 | POST | `/slskd_search` | Body `{"query": "..."}`. Starts a slskd search |
-| POST | `/import`, `/update`, `/bad` | Forwarded to the actions service |
 | GET | `/watch_albums` | List watched albums |
 | GET | `/watch_albums/<album_id>` | Get one watched album |
 | POST | `/watch_albums` | Body `{"album_id": "<mbid>"}`. Watch an album |
