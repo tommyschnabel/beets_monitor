@@ -1,0 +1,13 @@
+services:
+  beets_monitor:
+    image: ghcr.io/tommyschnabel/beets_monitor:latest
+    container_name: beets_monitor
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "5001:5001"
+    volumes:
+      # Catalog state (artists, albums, watch list, cached genres)
+      - ./config:/app/config
+      # Where /create_playlist writes M3U8 files; must match PLAYLIST_DIR
+      - ./playlists:/playlists

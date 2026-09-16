@@ -27,13 +27,13 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
         with:
-          # On the self-hosted runner the buildkit container otherwise lands on
-          # the default bridge and cannot reach the runner's cache server, so
-          # every cache export times out. That network does not exist on
-          # GitHub's runners, where buildkit would fail to start.
-          # The test is negated because '' is falsy in a GitHub expression, so
-          # the empty branch has to be the last one.
-          driver-opts: ${{ github.server_url != 'https://github.com' && 'network=tommy_default' || '' }}
+          # On a self-hosted runner the buildkit container otherwise lands on
+          # the default bridge and may not reach the runner's cache server, so
+          # every cache export times out. Set the BUILDKIT_NETWORK repository
+          # variable to the runner's Docker network there. It stays unset on
+          # GitHub's runners, where a missing network would stop buildkit
+          # from starting.
+          driver-opts: ${{ vars.BUILDKIT_NETWORK && format('network={0}', vars.BUILDKIT_NETWORK) || '' }}
 
       # Self-hosted runners have no GHCR credentials, so they build only.
       - name: Log in to GitHub Container Registry (GHCR)
