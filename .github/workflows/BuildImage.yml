@@ -24,16 +24,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      # When the job itself runs in a container (e.g. a Gitea act_runner), the
+      # buildkit container otherwise lands on the default bridge and cannot
+      # reach the runner's cache server, so every cache request times out.
+      # Put buildkit on the job container's network instead. On GitHub's
+      # runners the job is not a container, so this finds nothing.
+      - name: Detect job container network
+        id: net
+        run: |
+          network=$(docker inspect "$(hostname)" \
+            --format '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}} {{end}}' \
+            2>/dev/null | awk '{print $1}' || true)
+          echo "Job container network: ${network:-none}"
+          echo "driver-opts=${network:+network=$network}" >> "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
         with:
-          # On a self-hosted runner the buildkit container otherwise lands on
-          # the default bridge and may not reach the runner's cache server, so
-          # every cache export times out. Set the BUILDKIT_NETWORK repository
-          # variable to the runner's Docker network there. It stays unset on
-          # GitHub's runners, where a missing network would stop buildkit
-          # from starting.
-          driver-opts: ${{ vars.BUILDKIT_NETWORK && format('network={0}', vars.BUILDKIT_NETWORK) || '' }}
+          driver-opts: ${{ steps.net.outputs.driver-opts }}
 
       # Self-hosted runners have no GHCR credentials, so they build only.
       - name: Log in to GitHub Container Registry (GHCR)
