@@ -1,7 +1,5 @@
 # Beets Monitor
 
-[![Tests](https://github.com/tommyschnabel/beets_monitor/actions/workflows/Test.yml/badge.svg)](https://github.com/tommyschnabel/beets_monitor/actions/workflows/Test.yml)
-[![Docker](https://github.com/tommyschnabel/beets_monitor/actions/workflows/BuildImage.yml/badge.svg)](https://github.com/tommyschnabel/beets_monitor/actions/workflows/BuildImage.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 A Flask-based web interface for monitoring a [beets](https://beets.io)
