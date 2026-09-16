@@ -4,9 +4,10 @@
 [![Docker](https://github.com/tommyschnabel/beets_monitor/actions/workflows/BuildImage.yml/badge.svg)](https://github.com/tommyschnabel/beets_monitor/actions/workflows/BuildImage.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A Flask-based web interface for monitoring and managing a
-[beets](https://beets.io) music library. It compares your library against
-MusicBrainz to show which albums you're missing for each artist.
+A Flask-based web interface for monitoring a [beets](https://beets.io)
+music library. It compares your library against MusicBrainz to show which
+albums you're missing for each artist. It only reads from beets and never
+changes your library.
 
 ## Features
 
