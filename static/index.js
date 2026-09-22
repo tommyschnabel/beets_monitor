@@ -207,7 +207,7 @@ function renderWatchedAlbums() {
         return;
     }
 
-    // Build array of album data with artist name, album title, status, and missing track count
+    // Build array of album data with artist name, album title and status
     const albumsData = [];
     watchedAlbums.forEach(albumId => {
         // Look up album data from catalog
@@ -216,7 +216,6 @@ function renderWatchedAlbums() {
         let albumTitle = '';
         let albumYear = '';
         let albumStatus = 'missing';
-        let missingTracks = 0;
 
         // Search through catalog for this album
         if (catalogData) {
@@ -235,17 +234,6 @@ function renderWatchedAlbums() {
                         }
                     }
                     
-                    // Count missing tracks
-                    if (albumData.data && albumData.data.disks) {
-                        albumData.data.disks.forEach(disk => {
-                            Object.values(disk.tracks).forEach(track => {
-                                if (track.status === 'missing') {
-                                    missingTracks++;
-                                }
-                            });
-                        });
-                    }
-                    
                     break;
                 }
             }
@@ -256,21 +244,14 @@ function renderWatchedAlbums() {
             artistName,
             albumTitle,
             albumYear,
-            albumStatus,
-            missingTracks
+            albumStatus
         });
     });
 
-    // Sort by missing tracks ascending, then by artist name
+    // Alphabetical by artist name, then album title
     albumsData.sort((a, b) => {
-        // First sort by missing tracks ascending
-        const missingCompare = a.missingTracks - b.missingTracks;
-        if (missingCompare !== 0) {
-            return missingCompare;
-        }
-        
-        // Then sort by artist name
-        return a.artistName.localeCompare(b.artistName);
+        const artistCompare = a.artistName.localeCompare(b.artistName);
+        return artistCompare !== 0 ? artistCompare : a.albumTitle.localeCompare(b.albumTitle);
     });
 
     // Render sorted albums
@@ -535,17 +516,9 @@ function renderCatalog() {
         return;
     }
 
-    const sortedArtists = Object.entries(catalogData).sort(([idA, artistA], [idB, artistB]) => {
-        // Put completed artists first
-        const aComplete = artistA.status === 'complete';
-        const bComplete = artistB.status === 'complete';
-
-        if (aComplete && !bComplete) return -1;
-        if (!aComplete && bComplete) return 1;
-
-        // Secondary sort by artist name (alphanumeric)
-        return artistA.name.localeCompare(artistB.name);
-    });
+    // Alphabetical by artist name
+    const sortedArtists = Object.entries(catalogData)
+        .sort(([, artistA], [, artistB]) => artistA.name.localeCompare(artistB.name));
 
     sortedArtists.forEach(([artistId, artistData]) => {
         const artistItem = document.createElement('li');
@@ -611,23 +584,9 @@ function renderReleases(artistId) {
         return;
     }
 
-    const sortedReleases = Object.entries(artistData.release_groups).sort(([idA, releaseA], [idB, releaseB]) => {
-        // Get the date for each release
-        const dateA = releaseA.data ? releaseA.data.date : '';
-        const dateB = releaseB.data ? releaseB.data.date : '';
-
-        // If both have dates, compare them (newest first)
-        if (dateA && dateB) {
-            return dateB.localeCompare(dateA);
-        }
-
-        // If one has a date and the other doesn't, the one with a date comes first
-        if (dateA) return -1;
-        if (dateB) return 1;
-
-        // If neither has a date, fall back to comparing titles
-        return releaseA.title.localeCompare(releaseB.title);
-    });
+    // Alphabetical by release title
+    const sortedReleases = Object.entries(artistData.release_groups)
+        .sort(([, releaseA], [, releaseB]) => releaseA.title.localeCompare(releaseB.title));
 
     sortedReleases.forEach(([releaseId, releaseData]) => {
         const releaseItem = document.createElement('li');
