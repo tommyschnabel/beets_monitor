@@ -223,13 +223,24 @@ class TestBuildArtistGraph:
         monkeypatch.setattr(catalog, "load_artist_genres", lambda: genres)
         monkeypatch.setattr(catalog, "load_current_catalog", lambda: current or {})
 
-    def test_artists_without_genres_are_dropped(self, monkeypatch):
+    def test_artists_without_genres_are_unlinked_nodes(self, monkeypatch):
         self._stub(monkeypatch, {
             "a": {"name": "A", "genres": [{"name": "rock"}]},
             "b": {"name": "B", "genres": []},
         })
         graph = catalog.build_artist_graph()
-        assert [n["id"] for n in graph["nodes"]] == ["a"]
+        assert [n["id"] for n in graph["nodes"]] == ["a", "b"]
+        assert graph["nodes"][1]["genres"] == []
+        assert graph["edges"] == []
+
+    def test_catalog_artists_missing_from_genre_cache_are_included(self, monkeypatch):
+        self._stub(
+            monkeypatch,
+            {"a": {"name": "A", "genres": [{"name": "rock"}]}},
+            current={"c": {"name": "C", "status": "complete"}},
+        )
+        graph = catalog.build_artist_graph()
+        assert graph["nodes"][1] == {"id": "c", "name": "C", "genres": [], "status": "complete"}
 
     def test_edge_weight_is_the_shared_genre_count(self, monkeypatch):
         self._stub(monkeypatch, {
@@ -280,3 +291,40 @@ class TestBuildArtistGraph:
             "b": {"name": "B", "genres": [{"name": "jazz"}]},
         })
         assert catalog.build_artist_graph()["edges"] == []
+
+
+class TestPlexPlaylistArtists:
+    PLAYLIST_XML = b"""<MediaContainer title="Road Trip">
+        <Track><Media><Part file="/music/A/One/01.flac"/></Media></Track>
+        <Track><Media><Part file="/music/B/Two/01.flac"/></Media></Track>
+        <Track><Media><Part file="/music/A/One/02.flac"/></Media></Track>
+        <Track><Media><Part file="/music/Unknown/x.flac"/></Media></Track>
+    </MediaContainer>"""
+
+    def _stub(self, monkeypatch):
+        monkeypatch.setattr(catalog, "PLEX_TOKEN", "token")
+        monkeypatch.setattr(
+            catalog, "_plex_get",
+            lambda path, params=None: catalog.ElementTree.fromstring(self.PLAYLIST_XML),
+        )
+        monkeypatch.setattr(catalog, "fetch_beets_items", lambda: [
+            {"path": "A/One/01.flac", "mb_albumartistid": "a", "albumartist": "Artist A"},
+            {"path": "A/One/02.flac", "mb_albumartistid": "a", "albumartist": "Artist A"},
+            {"path": "B/Two/01.flac", "mb_artistid": "b", "artist": "Artist B"},
+        ])
+
+    def test_maps_tracks_to_artists_in_playlist_order(self, monkeypatch):
+        self._stub(monkeypatch)
+        result = catalog.plex_playlist_artists("42")
+        assert result["title"] == "Road Trip"
+        assert result["artists"] == [
+            {"id": "a", "name": "Artist A", "track_count": 2},
+            {"id": "b", "name": "Artist B", "track_count": 1},
+        ]
+        assert result["track_count"] == 4
+        assert result["unmatched_count"] == 1
+
+    def test_requires_token(self, monkeypatch):
+        monkeypatch.setattr(catalog, "PLEX_TOKEN", "")
+        with pytest.raises(RuntimeError):
+            catalog.plex_playlist_artists("42")

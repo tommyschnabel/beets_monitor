@@ -40,6 +40,8 @@ from catalog import (
     generate_artist_genres,
     build_artist_graph,
     build_playlists,
+    list_plex_playlists,
+    plex_playlist_artists,
 )
 
 app = Flask(__name__, static_folder='static')
@@ -56,7 +58,7 @@ SLSKD_API_KEY = os.environ.get('SLSKD_API_KEY', '')
 @app.after_request
 def add_cors_headers(response):
     """Add CORS headers to all responses"""
-    if request.path.startswith('/api/') or request.path.startswith('/watch_albums') or request.path in ['/get_catalog', '/update_catalog', '/health', '/ignore_album', '/artist_graph', '/update_artist_genres', '/create_playlist', '/slskd_search']:
+    if request.path.startswith('/api/') or request.path.startswith('/watch_albums') or request.path in ['/get_catalog', '/update_catalog', '/health', '/ignore_album', '/artist_graph', '/update_artist_genres', '/create_playlist', '/slskd_search', '/plex_playlists'] or request.path.startswith('/plex_playlists/'):
         response.headers['Access-Control-Allow-Origin'] = '*'
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
@@ -238,6 +240,42 @@ def create_playlist():
 
     except Exception as e:
         app.logger.error(f'Exception in /create_playlist: {e}', exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/plex_playlists', methods=['GET'])
+def plex_playlists():
+    """List the audio playlists on the Plex server."""
+    try:
+        playlists = list_plex_playlists()
+        return jsonify({
+            'status': 'success',
+            'playlists': playlists,
+            'timestamp': datetime.now().isoformat()
+        }), 200
+    except Exception as e:
+        app.logger.error(f'Exception in /plex_playlists: {e}', exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/plex_playlists/<playlist_id>/artists', methods=['GET'])
+def plex_playlist_artists_route(playlist_id):
+    """Return the beets artists (MBIDs) whose tracks appear in a Plex playlist."""
+    try:
+        result = plex_playlist_artists(playlist_id)
+        return jsonify({
+            'status': 'success',
+            **result,
+            'timestamp': datetime.now().isoformat()
+        }), 200
+    except Exception as e:
+        app.logger.error(f'Exception in /plex_playlists/{playlist_id}/artists: {e}', exc_info=True)
         return jsonify({
             'status': 'error',
             'message': str(e),

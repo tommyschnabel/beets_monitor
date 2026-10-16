@@ -792,24 +792,44 @@ async function removeRelease(albumId) {
     }
 }
 
-/* ==================== Artist Web (genre-linked ego graph) ==================== */
+/* ==================== Artist Web (playlist builder) ==================== */
 /*
- * A full 160-node force graph is an unreadable hairball, so we show a focused
- * "ego" view: one artist in the center with only its most-alike neighbors around
- * it. Clicking a neighbor re-centers the web on them, so you explore outward one
- * hop at a time. All neighbor math is done client-side from the fetched edge set.
+ * Pick a starting artist, then explore outward: the graph shows the focused
+ * artist with its most-alike neighbors, and the right pane lets you jump to
+ * similar artists or browse everyone sharing a genre. Artists you like are
+ * collected into a running playlist that is written out via /create_playlist.
+ * All neighbor/genre math is done client-side from the fetched graph.
  */
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
+const PLAYLIST_STORAGE_KEY = 'artistWebPlaylist';
 
 let artistGraph = { nodes: [], edges: [] };
 let graphNodeById = {};
 let focusArtistId = null;
-let focusHistory = [];
+// Back-stack of explore views: {type: 'artist'|'genre', id}.
+let exploreHistory = [];
+// What the explore pane shows: the focused artist, or a genre's artist list.
+let exploreView = null;
 let graphSim = null;
-// Artist ids currently drawn on the graph (focus + shown neighbors), kept in
-// sync by renderGraph() so "Create playlist" can act on exactly what's visible.
-let currentVisibleIds = [];
+// Top of the shared-genre color scale, matching the drawn graph's strongest link.
+let graphMaxShared = 1;
+// Running playlist: ordered artist ids plus the chosen name.
+let playlist = loadSavedPlaylist();
+
+function loadSavedPlaylist() {
+    try {
+        const saved = JSON.parse(localStorage.getItem(PLAYLIST_STORAGE_KEY));
+        if (saved && Array.isArray(saved.ids)) return { ids: saved.ids, name: saved.name || '' };
+    } catch (e) { /* storage unavailable or corrupt */ }
+    return { ids: [], name: '' };
+}
+
+function savePlaylist() {
+    try {
+        localStorage.setItem(PLAYLIST_STORAGE_KEY, JSON.stringify(playlist));
+    } catch (e) { /* storage unavailable */ }
+}
 
 async function loadArtistGraph() {
     const empty = document.getElementById('webEmpty');
@@ -835,12 +855,18 @@ async function loadArtistGraph() {
         document.getElementById('webStats').textContent =
             `${data.node_count} artists · ${data.edge_count} links`;
 
+        // Drop playlist entries for artists that no longer exist in the graph.
+        playlist.ids = playlist.ids.filter(id => graphNodeById[id]);
+        renderPlaylist();
+
         if (artistGraph.nodes.length === 0) {
             stopGraphSim();
             svg.innerHTML = '';
-            hideArtistPanel();
+            focusArtistId = null;
+            exploreView = null;
+            renderExplore();
             empty.innerHTML =
-                'No genre data yet.<br>Click <strong>“Fetch genres from MusicBrainz”</strong> to build the web.<br>' +
+                'No genre data yet.<br>Click <strong>“Fetch genres”</strong> to build the web.<br>' +
                 '<span style="font-size:13px;">(First run fetches one artist per second, so it may take a couple of minutes.)</span>';
             empty.style.display = 'block';
             return;
@@ -848,15 +874,14 @@ async function loadArtistGraph() {
 
         populateArtistDatalist();
 
-        // Keep the current focus across a refetch when possible; otherwise start
-        // from the most-connected artist so the default view is rich.
-        if (!focusArtistId || !graphNodeById[focusArtistId]) {
-            focusArtistId = highestDegreeArtist();
-            focusHistory = [];
+        if (focusArtistId && !graphNodeById[focusArtistId]) {
+            focusArtistId = null;
+            exploreView = null;
+            exploreHistory = [];
         }
-
         renderGraph();
-
+        renderExplore();
+        renderPlaylist();
     } catch (error) {
         console.error('Error loading artist graph:', error);
         empty.innerHTML = `Error loading artist web: ${error.message}`;
@@ -864,44 +889,22 @@ async function loadArtistGraph() {
     }
 }
 
-function degreeMap() {
-    const degree = {};
-    artistGraph.edges.forEach(e => {
-        degree[e.source] = (degree[e.source] || 0) + 1;
-        degree[e.target] = (degree[e.target] || 0) + 1;
-    });
-    return degree;
-}
-
-function highestDegreeArtist() {
-    const degree = degreeMap();
-    let best = artistGraph.nodes[0] ? artistGraph.nodes[0].id : null;
-    let bestDeg = -1;
-    artistGraph.nodes.forEach(n => {
-        const d = degree[n.id] || 0;
-        if (d > bestDeg) { bestDeg = d; best = n.id; }
-    });
-    return best;
-}
-
 function populateArtistDatalist() {
     const datalist = document.getElementById('artistOptions');
     const names = artistGraph.nodes.map(n => n.name).sort((a, b) => a.localeCompare(b));
-    datalist.innerHTML = '';
-    names.forEach(name => {
-        const opt = document.createElement('option');
-        opt.value = name;
-        datalist.appendChild(opt);
-    });
+    datalist.innerHTML = names.map(name => `<option value="${escapeHtml(name)}"></option>`).join('');
 }
 
 function onArtistSearch() {
-    const value = document.getElementById('artistSearch').value.trim().toLowerCase();
+    const input = document.getElementById('artistSearch');
+    const value = input.value.trim().toLowerCase();
     if (!value) return;
     const match = artistGraph.nodes.find(n => n.name.toLowerCase() === value)
         || artistGraph.nodes.find(n => n.name.toLowerCase().includes(value));
     if (match) {
-        setFocus(match.id);
+        focusArtist(match.id);
+        input.value = '';
+        input.blur();
     } else {
         showToast(`No artist matching “${value}” in the web`, 'error');
     }
@@ -918,7 +921,6 @@ async function refreshArtistGenres() {
     empty.style.display = 'block';
     stopGraphSim();
     document.getElementById('webGraph').innerHTML = '';
-    hideArtistPanel();
 
     try {
         const response = await fetch('/update_artist_genres', {
@@ -942,124 +944,51 @@ async function refreshArtistGenres() {
     }
 }
 
-// Open the modal listing the currently-visible artists so they can be
-// checked/unchecked before the playlist is created.
-function createPlaylist() {
-    if (!focusArtistId || currentVisibleIds.length === 0) {
-        showToast('Open the Artist Web and focus an artist first', 'error');
-        return;
-    }
-    const focusNode = graphNodeById[focusArtistId];
-    if (!focusNode || !focusNode.name) {
-        showToast('Could not determine playlist name', 'error');
-        return;
-    }
+// ---- Navigation ----
 
-    document.getElementById('playlistName').value = `${focusNode.name} & Similar`;
-
-    // Focus artist first, then the rest in the order they're drawn.
-    const list = document.getElementById('playlistArtistList');
-    list.innerHTML = currentVisibleIds.map(id => {
-        const node = graphNodeById[id];
-        const label = node ? node.name : id;
-        const status = (node && node.status) || 'unknown';
-        return `<li onclick="if(event.target.tagName!=='INPUT'){this.querySelector('input').click();}">
-            <input type="checkbox" value="${escapeAttr(id)}" checked onchange="updatePlaylistArtistCount()">
-            <span class="legend-dot status-${status}-dot"></span>
-            <span class="artist-name">${escapeHtml(label)}</span>
-        </li>`;
-    }).join('');
-
-    updatePlaylistArtistCount();
-    document.getElementById('playlistModal').style.display = 'flex';
+function pushExploreHistory() {
+    if (exploreView) exploreHistory.push(exploreView);
 }
 
-function closePlaylistModal() {
-    document.getElementById('playlistModal').style.display = 'none';
-}
-
-function togglePlaylistArtists(checked) {
-    document.querySelectorAll('#playlistArtistList input[type="checkbox"]')
-        .forEach(cb => { cb.checked = checked; });
-    updatePlaylistArtistCount();
-}
-
-function updatePlaylistArtistCount() {
-    const count = document.querySelectorAll('#playlistArtistList input[type="checkbox"]:checked').length;
-    document.getElementById('playlistArtistCount').textContent = count;
-}
-
-async function confirmCreatePlaylist() {
-    const name = document.getElementById('playlistName').value.trim();
-    if (!name) {
-        showToast('Enter a playlist name', 'error');
-        return;
-    }
-    const artistIds = Array.from(
-        document.querySelectorAll('#playlistArtistList input[type="checkbox"]:checked')
-    ).map(cb => cb.value);
-    if (artistIds.length === 0) {
-        showToast('Select at least one artist', 'error');
-        return;
-    }
-
-    const createBtn = document.getElementById('playlistCreateBtn');
-    createBtn.disabled = true;
-    createBtn.textContent = 'Creating…';
-    try {
-        const response = await fetch('/create_playlist', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ artist_ids: artistIds, name })
-        });
-        if (!response.ok) {
-            const errData = await response.json().catch(() => ({}));
-            throw new Error(errData.message || `HTTP error! status: ${response.status}`);
-        }
-        const data = await response.json();
-        if (data.status === 'error') {
-            throw new Error(data.message);
-        }
-        closePlaylistModal();
-        showToast(
-            `Playlist “${data.name}” created: ${data.track_count} tracks from ${data.artist_count} artists`,
-            'success'
-        );
-    } catch (error) {
-        console.error('Error creating playlist:', error);
-        showToast(`Error creating playlist: ${error.message}`, 'error');
-    } finally {
-        createBtn.disabled = false;
-        createBtn.textContent = 'Create playlist';
-    }
-}
-
-function stopGraphSim() {
-    if (graphSim) {
-        cancelAnimationFrame(graphSim.raf);
-        graphSim = null;
-    }
-}
-
-function setFocus(artistId, pushHistory = true) {
+function focusArtist(artistId) {
     if (!graphNodeById[artistId]) return;
-    if (artistId === focusArtistId) return;
-    if (pushHistory && focusArtistId) {
-        focusHistory.push(focusArtistId);
+    if (exploreView && exploreView.type === 'artist' && exploreView.id === artistId) return;
+    pushExploreHistory();
+    exploreView = { type: 'artist', id: artistId };
+    if (artistId !== focusArtistId) {
+        focusArtistId = artistId;
+        renderGraph();
+    } else {
+        highlightGraph();
     }
-    focusArtistId = artistId;
-    document.getElementById('artistSearch').value = graphNodeById[artistId].name;
-    renderGraph();
+    renderExplore();
+    // Playlist dots are colored relative to the focused artist.
+    renderPlaylist();
+}
+
+// Genre view keeps the graph on the current artist and highlights matches.
+function openGenre(genre) {
+    pushExploreHistory();
+    exploreView = { type: 'genre', id: genre };
+    highlightGraph();
+    renderExplore();
 }
 
 function goBack() {
-    if (focusHistory.length === 0) return;
-    focusArtistId = focusHistory.pop();
-    document.getElementById('artistSearch').value = graphNodeById[focusArtistId].name;
-    renderGraph();
+    if (exploreHistory.length === 0) return;
+    exploreView = exploreHistory.pop();
+    if (exploreView.type === 'artist' && exploreView.id !== focusArtistId) {
+        focusArtistId = exploreView.id;
+        renderGraph();
+    } else {
+        highlightGraph();
+    }
+    renderExplore();
+    // Playlist dots are colored relative to the focused artist.
+    renderPlaylist();
 }
 
-// All edges incident to the focus artist, ranked by shared-genre count (most alike first).
+// All edges incident to an artist, ranked by shared-genre count (most alike first).
 function neighborsOf(artistId) {
     const out = [];
     artistGraph.edges.forEach(e => {
@@ -1070,24 +999,383 @@ function neighborsOf(artistId) {
     return out;
 }
 
+function artistsWithGenre(genre) {
+    return artistGraph.nodes
+        .filter(n => (n.genres || []).includes(genre))
+        .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// ---- Playlist ----
+
+function inPlaylist(artistId) {
+    return playlist.ids.includes(artistId);
+}
+
+function togglePlaylistArtist(artistId) {
+    if (inPlaylist(artistId)) {
+        playlist.ids = playlist.ids.filter(id => id !== artistId);
+    } else {
+        playlist.ids.push(artistId);
+    }
+    onPlaylistChanged();
+}
+
+function addArtistsToPlaylist(artistIds) {
+    const before = playlist.ids.length;
+    artistIds.forEach(id => { if (!inPlaylist(id)) playlist.ids.push(id); });
+    const added = playlist.ids.length - before;
+    showToast(added ? `Added ${added} artist${added === 1 ? '' : 's'}` : 'All already in playlist', 'success');
+    onPlaylistChanged();
+}
+
+function clearPlaylist() {
+    if (playlist.ids.length && !confirm('Remove all artists from the playlist?')) return;
+    playlist.ids = [];
+    onPlaylistChanged();
+}
+
+function onPlaylistNameInput(value) {
+    playlist.name = value;
+    savePlaylist();
+}
+
+function onPlaylistChanged() {
+    savePlaylist();
+    renderPlaylist();
+    renderExplore();
+    highlightGraph();
+}
+
+function renderPlaylist() {
+    document.getElementById('playlistCount').textContent = playlist.ids.length;
+    const nameInput = document.getElementById('playlistName');
+    if (document.activeElement !== nameInput) nameInput.value = playlist.name;
+
+    const list = document.getElementById('playlistList');
+    if (playlist.ids.length === 0) {
+        list.innerHTML = '<li class="pane-empty">No artists yet. Use <strong>+</strong> to add them.</li>';
+    } else {
+        list.innerHTML = playlist.ids.map(id => {
+            const node = graphNodeById[id];
+            const name = node ? node.name : id;
+            return `<li>
+                ${artistLink(id, name)}
+                <button class="row-btn remove" onclick="togglePlaylistArtist('${escapeAttr(id)}')" title="Remove">×</button>
+            </li>`;
+        }).join('');
+    }
+    document.getElementById('playlistCreateBtn').disabled = playlist.ids.length === 0;
+}
+
+async function createPlaylist() {
+    const name = document.getElementById('playlistName').value.trim();
+    if (!name) {
+        showToast('Enter a playlist name', 'error');
+        document.getElementById('playlistName').focus();
+        return;
+    }
+    if (playlist.ids.length === 0) {
+        showToast('Add at least one artist', 'error');
+        return;
+    }
+
+    const createBtn = document.getElementById('playlistCreateBtn');
+    createBtn.disabled = true;
+    createBtn.textContent = 'Creating…';
+    try {
+        const response = await fetch('/create_playlist', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ artist_ids: playlist.ids, name })
+        });
+        if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(errData.message || `HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        if (data.status === 'error') {
+            throw new Error(data.message);
+        }
+        showToast(
+            `Playlist “${data.name}” created: ${data.track_count} tracks from ${data.artist_count} artists`,
+            'success'
+        );
+    } catch (error) {
+        console.error('Error creating playlist:', error);
+        showToast(`Error creating playlist: ${error.message}`, 'error');
+    } finally {
+        createBtn.textContent = 'Create playlist';
+        createBtn.disabled = playlist.ids.length === 0;
+    }
+}
+
+// ---- Load from Plex ----
+
+// Artists of the Plex playlist being previewed in the modal.
+let plexPreview = null;
+
+async function openPlexModal() {
+    plexPreview = null;
+    const body = document.getElementById('plexModalBody');
+    body.innerHTML = '<h3>Load from Plex</h3><div class="pane-empty">Loading playlists…</div>';
+    document.getElementById('plexModal').style.display = 'flex';
+    try {
+        const response = await fetch('/plex_playlists');
+        const data = await response.json();
+        if (!response.ok || data.status === 'error') {
+            throw new Error(data.message || `HTTP error! status: ${response.status}`);
+        }
+        const items = data.playlists.length
+            ? data.playlists.map(pl => `
+                <li>
+                    <button class="row-link" onclick="loadPlexPlaylist('${escapeAttr(pl.id)}')">
+                        <span class="row-name">${escapeHtml(pl.title)}</span>
+                    </button>
+                    <span class="similar-count">${pl.track_count} tracks${pl.smart ? ' · smart' : ''}</span>
+                </li>`).join('')
+            : '<li class="pane-empty">No audio playlists on Plex.</li>';
+        body.innerHTML = `<h3>Load from Plex</h3><ul class="similar-list modal-list">${items}</ul>`;
+    } catch (error) {
+        console.error('Error loading Plex playlists:', error);
+        body.innerHTML = `<h3>Load from Plex</h3><div class="pane-empty">Error: ${escapeHtml(error.message)}</div>`;
+    }
+}
+
+async function loadPlexPlaylist(playlistId) {
+    const body = document.getElementById('plexModalBody');
+    body.innerHTML = '<h3>Load from Plex</h3><div class="pane-empty">Matching tracks to artists…</div>';
+    try {
+        const response = await fetch(`/plex_playlists/${encodeURIComponent(playlistId)}/artists`);
+        const data = await response.json();
+        if (!response.ok || data.status === 'error') {
+            throw new Error(data.message || `HTTP error! status: ${response.status}`);
+        }
+        plexPreview = data;
+        // Artists missing from the catalog aren't in the web, so they can't join the playlist here.
+        const items = data.artists.map(a => {
+            const inWeb = !!graphNodeById[a.id];
+            return `<li class="${inWeb ? '' : 'disabled'}" title="${inWeb ? '' : 'Not in the artist web'}">
+                <label class="check-row">
+                    <input type="checkbox" value="${escapeHtml(a.id)}" ${inWeb ? 'checked' : 'disabled'}
+                           onchange="updatePlexSelectedCount()">
+                    <span class="row-name">${escapeHtml(a.name)}</span>
+                </label>
+                <span class="similar-count">${a.track_count} track${a.track_count === 1 ? '' : 's'}</span>
+            </li>`;
+        }).join('');
+        const unmatched = data.unmatched_count
+            ? `<div class="pane-empty">${data.unmatched_count} track${data.unmatched_count === 1 ? '' : 's'} not found in beets.</div>` : '';
+        body.innerHTML = `
+            <button class="panel-back" onclick="openPlexModal()">← Playlists</button>
+            <h3>${escapeHtml(data.title)}</h3>
+            <div class="panel-section-title">
+                Artists (<span id="plexSelectedCount">0</span> selected)
+                <span class="pane-actions">
+                    <button class="modal-link-btn" onclick="togglePlexArtists(true)">All</button>
+                    <button class="modal-link-btn" onclick="togglePlexArtists(false)">None</button>
+                </span>
+            </div>
+            <ul id="plexArtistList" class="similar-list modal-list">${items || '<li class="pane-empty">No matching artists.</li>'}</ul>
+            ${unmatched}
+            <div class="modal-actions">
+                <button class="update-btn modal-secondary" onclick="closePlexModal()">Cancel</button>
+                <button id="plexAddBtn" class="update-btn" onclick="addPlexArtists()">Add to playlist</button>
+            </div>`;
+        updatePlexSelectedCount();
+    } catch (error) {
+        console.error('Error loading Plex playlist:', error);
+        body.innerHTML = `
+            <button class="panel-back" onclick="openPlexModal()">← Playlists</button>
+            <div class="pane-empty">Error: ${escapeHtml(error.message)}</div>`;
+    }
+}
+
+function checkedPlexArtistIds() {
+    return [...document.querySelectorAll('#plexArtistList input:checked')].map(cb => cb.value);
+}
+
+function togglePlexArtists(checked) {
+    document.querySelectorAll('#plexArtistList input:not(:disabled)').forEach(cb => { cb.checked = checked; });
+    updatePlexSelectedCount();
+}
+
+function updatePlexSelectedCount() {
+    const count = checkedPlexArtistIds().length;
+    document.getElementById('plexSelectedCount').textContent = count;
+    document.getElementById('plexAddBtn').disabled = count === 0;
+}
+
+// Add the checked artists, adopt the Plex name for a fresh playlist, and
+// start exploring from the first artist.
+function addPlexArtists() {
+    const ids = checkedPlexArtistIds();
+    if (ids.length === 0) return;
+    if (playlist.ids.length === 0 || !playlist.name.trim()) {
+        playlist.name = plexPreview.title;
+        document.getElementById('playlistName').value = plexPreview.title;
+    }
+    closePlexModal();
+    addArtistsToPlaylist(ids);
+    focusArtist(ids[0]);
+}
+
+function closePlexModal() {
+    document.getElementById('plexModal').style.display = 'none';
+}
+
+// ---- Explore pane ----
+
+// Number of genres an artist shares with the focused artist.
+function sharedWithFocus(artistId) {
+    const focus = graphNodeById[focusArtistId];
+    const node = graphNodeById[artistId];
+    if (!focus || !node) return 0;
+    const focusGenres = new Set(focus.genres || []);
+    return (node.genres || []).filter(g => focusGenres.has(g)).length;
+}
+
+// Dot colored like the graph: white for the focus, shared-genre scale otherwise.
+function sharedDot(artistId) {
+    let color = 'var(--unknown)';
+    let title = 'No genres shared with focused artist';
+    if (artistId === focusArtistId) {
+        color = '#fff';
+        title = 'Focused artist';
+    } else {
+        const shared = sharedWithFocus(artistId);
+        if (shared > 0) {
+            color = sharedColor(Math.min(shared, graphMaxShared), graphMaxShared);
+            title = `${shared} genre${shared === 1 ? '' : 's'} shared with focused artist`;
+        }
+    }
+    return `<span class="legend-dot" style="background: ${color}" title="${title}"></span>`;
+}
+
+function artistLink(id, name) {
+    return `<button class="row-link" onclick="focusArtist('${escapeAttr(id)}')">
+        ${sharedDot(id)}
+        <span class="row-name">${escapeHtml(name)}</span>
+    </button>`;
+}
+
+function addButton(id) {
+    const added = inPlaylist(id);
+    return `<button class="row-btn${added ? ' added' : ''}" onclick="togglePlaylistArtist('${escapeAttr(id)}')"
+        title="${added ? 'Remove from playlist' : 'Add to playlist'}">${added ? '✓' : '+'}</button>`;
+}
+
+function renderExplore() {
+    const pane = document.getElementById('explorePane');
+    const backBtn = exploreHistory.length
+        ? '<button class="panel-back" onclick="goBack()">← Back</button>' : '';
+
+    if (!exploreView) {
+        pane.innerHTML = `
+            <div class="pane-empty">
+                Search for an artist above to start exploring.<br>
+                Click artists and genres to wander, and <strong>+</strong> to collect them.
+            </div>`;
+        return;
+    }
+
+    if (exploreView.type === 'artist') {
+        const node = graphNodeById[exploreView.id];
+        if (!node) return;
+        const status = node.status || 'unknown';
+        const added = inPlaylist(node.id);
+        const genreChips = (node.genres || [])
+            .map(g => `<button class="genre-chip" onclick="openGenre('${escapeAttr(g)}')">${escapeHtml(g)}</button>`)
+            .join('');
+        const neighbors = neighborsOf(node.id);
+        const similarItems = neighbors.length
+            ? neighbors.map(s => {
+                const nb = graphNodeById[s.id];
+                return `<li title="Shared: ${escapeHtml((s.shared || []).join(', '))}">
+                    ${artistLink(s.id, nb ? nb.name : s.id)}
+                    <span class="similar-count">${s.weight}</span>
+                    ${addButton(s.id)}
+                </li>`;
+            }).join('')
+            : '<li class="pane-empty">No linked artists at this threshold</li>';
+        const notAdded = neighbors.map(s => s.id).filter(id => !inPlaylist(id));
+
+        pane.innerHTML = `
+            ${backBtn}
+            <div class="pane-head">
+                <div>
+                    <h3>${escapeHtml(node.name)}</h3>
+                    <div class="panel-status status-${status}">${status} in library</div>
+                </div>
+                <button class="update-btn${added ? ' modal-secondary' : ''}" onclick="togglePlaylistArtist('${escapeAttr(node.id)}')">
+                    ${added ? '✓ In playlist' : '+ Add'}
+                </button>
+            </div>
+            <div class="panel-section-title">Genres</div>
+            <div class="genre-chips">${genreChips || '<span class="pane-empty">None</span>'}</div>
+            <div class="panel-section-title">
+                Most alike (${neighbors.length})
+                ${notAdded.length ? `<button class="modal-link-btn" onclick="addArtistsToPlaylist(neighborsOf('${escapeAttr(node.id)}').map(s => s.id))">Add all</button>` : ''}
+            </div>
+            <ul class="similar-list">${similarItems}</ul>
+        `;
+        return;
+    }
+
+    const genre = exploreView.id;
+    const artists = artistsWithGenre(genre);
+    const notAdded = artists.filter(a => !inPlaylist(a.id));
+    pane.innerHTML = `
+        ${backBtn}
+        <div class="pane-head">
+            <div>
+                <div class="pane-kicker">Genre</div>
+                <h3>${escapeHtml(genre)}</h3>
+                <div class="panel-status">${artists.length} artist${artists.length === 1 ? '' : 's'}</div>
+            </div>
+            ${notAdded.length ? `<button class="update-btn" onclick="addArtistsToPlaylist(artistsWithGenre('${escapeAttr(genre)}').map(a => a.id))">+ Add all</button>` : ''}
+        </div>
+        <ul class="similar-list">
+            ${artists.map(a => `<li>${artistLink(a.id, a.name)}${addButton(a.id)}</li>`).join('')}
+        </ul>
+    `;
+}
+
+// ---- Graph ----
+
+function stopGraphSim() {
+    if (graphSim) {
+        cancelAnimationFrame(graphSim.raf);
+        graphSim = null;
+    }
+}
+
+// Re-apply playlist rings and genre highlighting without rebuilding the graph.
+function highlightGraph() {
+    if (!graphSim) return;
+    const genre = exploreView && exploreView.type === 'genre' ? exploreView.id : null;
+    graphSim.nodes.forEach(n => {
+        n.el.classList.toggle('in-playlist', inPlaylist(n.id));
+        n.el.classList.toggle('dimmed', !!genre && !(n.genres || []).includes(genre));
+    });
+}
+
 function renderGraph() {
     stopGraphSim();
     const svg = document.getElementById('webGraph');
     svg.innerHTML = '';
     document.getElementById('webEmpty').style.display = 'none';
 
+    const hint = document.getElementById('webHint');
     if (!focusArtistId || !graphNodeById[focusArtistId]) {
-        currentVisibleIds = [];
+        hint.style.display = artistGraph.nodes.length ? 'flex' : 'none';
         return;
     }
+    hint.style.display = 'none';
 
     const maxNeighbors = parseInt(document.getElementById('maxNeighborsFilter').value, 10);
     const focus = graphNodeById[focusArtistId];
-    const allNeighbors = neighborsOf(focusArtistId);
-    const shown = allNeighbors.slice(0, maxNeighbors);
+    const shown = neighborsOf(focusArtistId).slice(0, maxNeighbors);
     const shownIds = new Set(shown.map(n => n.id));
-    // Expose exactly the drawn artists (focus + shown neighbors) for playlist creation.
-    currentVisibleIds = [focusArtistId, ...shown.map(n => n.id)];
 
     const rect = svg.getBoundingClientRect();
     const width = rect.width || 800;
@@ -1103,6 +1391,8 @@ function renderGraph() {
     svg.appendChild(root);
 
     const maxW = shown.length ? shown[0].weight : 1;
+    graphMaxShared = maxW;
+    updateSharedLegend(maxW);
     const minW = shown.length ? shown[shown.length - 1].weight : 1;
     const Rmin = Math.min(width, height) * 0.16;
     const Rmax = Math.min(width, height) * 0.40;
@@ -1163,25 +1453,36 @@ function renderGraph() {
         return e;
     });
 
-    const nodeEls = simNodes.map(n => {
+    simNodes.forEach(n => {
         const g = document.createElementNS(SVG_NS, 'g');
-        g.setAttribute('class', `graph-node status-${n.status || 'unknown'}${n.isFocus ? ' focus' : ''}`);
+        g.setAttribute('class', `graph-node${n.isFocus ? ' focus' : ''}`);
         g.dataset.id = n.id;
 
+        const ring = document.createElementNS(SVG_NS, 'circle');
+        ring.setAttribute('class', 'playlist-ring');
+        ring.setAttribute('r', n.radius + 5);
+        g.appendChild(ring);
+
         const circle = document.createElementNS(SVG_NS, 'circle');
+        circle.setAttribute('class', 'node-dot');
         circle.setAttribute('r', n.radius);
+        if (!n.isFocus) circle.style.fill = sharedColor(n.weight, maxW);
         g.appendChild(circle);
 
+        const tip = document.createElementNS(SVG_NS, 'title');
+        tip.textContent = n.isFocus ? n.name
+            : `${n.name}: ${n.weight} shared (${(n.shared || []).join(', ')})`;
+        g.appendChild(tip);
+
         const label = document.createElementNS(SVG_NS, 'text');
-        label.setAttribute('dy', -n.radius - 5);
-        label.textContent = n.name + (n.isFocus ? '' : `  (${n.weight})`);
+        label.setAttribute('dy', -n.radius - 8);
+        label.textContent = n.name;
         if (n.isFocus) label.setAttribute('class', 'focus-label');
         g.appendChild(label);
 
         g.addEventListener('pointerdown', ev => onNodePointerDown(ev, n));
         nodeGroup.appendChild(g);
         n.el = g;
-        return n;
     });
 
     // Light force pass (few nodes) purely to de-overlap neighbor labels.
@@ -1252,18 +1553,47 @@ function renderGraph() {
     graphSim.raf = requestAnimationFrame(tick);
 
     setupGraphInteractions(svg, root);
-    showArtistPanel(focusArtistId, allNeighbors);
+    highlightGraph();
+}
+
+// Sequential purple scale: more shared genres = brighter, more saturated.
+function sharedColor(weight, maxWeight) {
+    const t = maxWeight <= 1 ? 1 : (weight - 1) / (maxWeight - 1);
+    const light = 32 + t * 40;
+    const sat = 35 + t * 50;
+    return `hsl(262, ${sat}%, ${light}%)`;
+}
+
+function updateSharedLegend(maxWeight) {
+    document.getElementById('sharedLegendMax').textContent = maxWeight;
+    document.getElementById('sharedLegendBar').style.background =
+        `linear-gradient(to right, ${sharedColor(1, maxWeight)}, ${sharedColor(maxWeight, maxWeight)})`;
 }
 
 // ---- Pan / zoom + node dragging ----
 
+// Window-level listeners are bound once; they act on whichever svg/transform is current.
+let panState = null;
+window.addEventListener('pointermove', ev => {
+    if (!panState || !graphSim) return;
+    const t = graphSim.transform;
+    t.x = ev.clientX - panState.x;
+    t.y = ev.clientY - panState.y;
+    graphSim.applyTransform();
+});
+window.addEventListener('pointerup', () => {
+    if (!panState) return;
+    panState = null;
+    document.getElementById('webGraph').classList.remove('panning');
+});
+
 function setupGraphInteractions(svg, root) {
     const t = graphSim.transform;
 
-    function applyTransform() {
+    graphSim.applyTransform = () => {
         root.setAttribute('transform', `translate(${t.x},${t.y}) scale(${t.k})`);
-    }
-    applyTransform();
+    };
+    graphSim.applyTransform();
 
     graphSim.toGraphCoords = (ev) => {
         const rect = svg.getBoundingClientRect();
@@ -1273,35 +1603,29 @@ function setupGraphInteractions(svg, root) {
         };
     };
 
-    let panning = false;
-    let panStart = null;
+    // svg element is reused across renders, so bind its own listeners only once.
+    if (svg.dataset.bound) return;
+    svg.dataset.bound = '1';
+
     svg.addEventListener('pointerdown', ev => {
-        if (ev.target.closest('.graph-node')) return;
-        panning = true;
-        panStart = { x: ev.clientX - t.x, y: ev.clientY - t.y };
+        if (!graphSim || ev.target.closest('.graph-node')) return;
+        const tr = graphSim.transform;
+        panState = { x: ev.clientX - tr.x, y: ev.clientY - tr.y };
         svg.classList.add('panning');
-    });
-    window.addEventListener('pointermove', ev => {
-        if (!panning) return;
-        t.x = ev.clientX - panStart.x;
-        t.y = ev.clientY - panStart.y;
-        applyTransform();
-    });
-    window.addEventListener('pointerup', () => {
-        panning = false;
-        svg.classList.remove('panning');
     });
 
     svg.addEventListener('wheel', ev => {
+        if (!graphSim) return;
         ev.preventDefault();
+        const tr = graphSim.transform;
         const rect = svg.getBoundingClientRect();
         const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
         const scale = ev.deltaY < 0 ? 1.1 : 1 / 1.1;
-        const newK = Math.max(0.3, Math.min(4, t.k * scale));
-        t.x = mx - ((mx - t.x) * newK) / t.k;
-        t.y = my - ((my - t.y) * newK) / t.k;
-        t.k = newK;
-        applyTransform();
+        const newK = Math.max(0.3, Math.min(4, tr.k * scale));
+        tr.x = mx - ((mx - tr.x) * newK) / tr.k;
+        tr.y = my - ((my - tr.y) * newK) / tr.k;
+        tr.k = newK;
+        graphSim.applyTransform();
     }, { passive: false });
 }
 
@@ -1310,8 +1634,10 @@ function onNodePointerDown(ev, node) {
     node.fixed = true;
     let moved = false;
     const startFixed = node.isFocus;
+    const start = { x: ev.clientX, y: ev.clientY };
 
     function move(e) {
+        if (!moved && Math.hypot(e.clientX - start.x, e.clientY - start.y) < 4) return;
         moved = true;
         const p = graphSim.toGraphCoords(e);
         node.x = p.x; node.y = p.y;
@@ -1319,59 +1645,17 @@ function onNodePointerDown(ev, node) {
         node.el.setAttribute('transform', `translate(${node.x},${node.y})`);
         if (graphSim) graphSim.reheat();
     }
-    function up() {
+    function up(e) {
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', up);
         node.fixed = startFixed;
-        // A click (no drag) on a neighbor re-centers the web on them.
-        if (!moved && !node.isFocus) setFocus(node.id);
+        if (moved) return;
+        // Shift-click toggles playlist membership; a plain click focuses the artist.
+        if (e.shiftKey) togglePlaylistArtist(node.id);
+        else focusArtist(node.id);
     }
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
-}
-
-// ---- Detail panel ----
-
-function showArtistPanel(artistId, allNeighbors) {
-    const panel = document.getElementById('artistPanel');
-    const node = graphNodeById[artistId];
-    if (!node) return;
-
-    const statusLabel = node.status || 'unknown';
-    const genreChips = (node.genres || [])
-        .map(g => `<span class="genre-chip">${escapeHtml(g)}</span>`)
-        .join('');
-
-    const similarItems = allNeighbors.length
-        ? allNeighbors.map(s => {
-            const nb = graphNodeById[s.id];
-            const name = nb ? nb.name : s.id;
-            const dotStatus = nb ? (nb.status || 'unknown') : 'unknown';
-            return `<li onclick="setFocus('${escapeAttr(s.id)}')" title="Shared: ${escapeAttr((s.shared || []).join(', '))}">
-                <span class="similar-name"><span class="legend-dot status-${dotStatus}-dot"></span>${escapeHtml(name)}</span>
-                <span class="similar-count">${s.weight} shared</span>
-            </li>`;
-        }).join('')
-        : '<li style="cursor:default;">No linked artists at this threshold</li>';
-
-    const backBtn = focusHistory.length
-        ? `<button class="panel-back" onclick="goBack()">← Back</button>` : '';
-
-    panel.innerHTML = `
-        ${backBtn}
-        <h3>${escapeHtml(node.name)}</h3>
-        <div class="panel-status status-${statusLabel}">${statusLabel} in library</div>
-        <div class="panel-section-title">Genres</div>
-        <div class="genre-chips">${genreChips || '<span style="color:#777;">None</span>'}</div>
-        <div class="panel-section-title">Most alike (${allNeighbors.length})</div>
-        <ul class="similar-list">${similarItems}</ul>
-    `;
-    panel.style.display = 'block';
-}
-
-function hideArtistPanel() {
-    const panel = document.getElementById('artistPanel');
-    if (panel) panel.style.display = 'none';
 }
 
 function escapeHtml(str) {

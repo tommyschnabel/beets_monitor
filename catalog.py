@@ -441,7 +441,9 @@ def generate_artist_genres(force=False):
 def build_artist_graph(min_shared=2):
     """Build a genre-linked artist graph from cached genre data.
 
-    Nodes are catalog artists that have at least one genre. Edges connect two
+    Nodes are every catalog artist, including ones MusicBrainz has no genres for
+    (or that haven't been fetched yet) so they can still be found and added to
+    playlists; those nodes simply have no edges. Edges connect two
     artists that share genres, weighted by the number of shared genres. Only edges
     with weight >= min_shared are returned to avoid a hairball from ubiquitous
     genres like "rock"; any node left with no such edge keeps its single strongest
@@ -455,15 +457,19 @@ def build_artist_graph(min_shared=2):
     # Build nodes and a genre-name-set per artist for fast intersection.
     nodes = []
     genre_sets = {}
-    for artist_id, info in artist_genres.items():
+    artist_ids = list(artist_genres) + [
+        artist_id for artist_id in current_catalog if artist_id and artist_id not in artist_genres
+    ]
+    for artist_id in artist_ids:
+        info = artist_genres.get(artist_id) or {}
         genre_names = [g['name'] for g in info.get('genres', [])]
-        if not genre_names:
-            continue
-        genre_sets[artist_id] = set(genre_names)
-        status = current_catalog.get(artist_id, {}).get('status', 'unknown')
+        if genre_names:
+            genre_sets[artist_id] = set(genre_names)
+        catalog_entry = current_catalog.get(artist_id, {})
+        status = catalog_entry.get('status', 'unknown')
         nodes.append({
             'id': artist_id,
-            'name': info.get('name', artist_id),
+            'name': info.get('name') or catalog_entry.get('name') or artist_id,
             'genres': genre_names,
             'status': status,
         })
@@ -669,6 +675,79 @@ def upload_plex_playlist(title, track_paths):
     except requests.exceptions.RequestException as e:
         logger.warning(f'Plex playlist import failed: {e}')
         return False
+
+def list_plex_playlists():
+    """Return the Plex audio playlists as [{id, title, track_count, smart}].
+
+    Raises RuntimeError if PLEX_TOKEN is unset; request errors propagate.
+    """
+    if not PLEX_TOKEN:
+        raise RuntimeError('PLEX_TOKEN is not set')
+    root = _plex_get('/playlists', {'playlistType': 'audio'})
+    playlists = [
+        {
+            'id': pl.get('ratingKey'),
+            'title': pl.get('title') or '',
+            'track_count': int(pl.get('leafCount') or 0),
+            'smart': pl.get('smart') == '1',
+        }
+        for pl in root.findall('Playlist')
+    ]
+    playlists.sort(key=lambda pl: pl['title'].lower())
+    return playlists
+
+def plex_playlist_artists(playlist_id):
+    """Resolve a Plex playlist's tracks to beets artists.
+
+    Each track's Plex file path is matched to a beets item (via the same
+    PLEX_MUSIC_PREFIX mapping used when writing playlists), and that item's
+    album-artist MBID identifies the artist.
+
+    Returns:
+        dict with title, artists [{id, name, track_count}] in order of first
+        appearance in the playlist, track_count, and unmatched_count.
+    """
+    if not PLEX_TOKEN:
+        raise RuntimeError('PLEX_TOKEN is not set')
+    root = _plex_get(f'/playlists/{playlist_id}/items')
+    title = root.get('title') or ''
+    plex_paths = []
+    for track in root.findall('Track'):
+        part = next(track.iter('Part'), None)
+        if part is not None and part.get('file'):
+            plex_paths.append(part.get('file'))
+
+    path_to_item = {}
+    for item in fetch_beets_items():
+        if item.get('path'):
+            path_to_item[to_playlist_path(item['path'], PLEX_MUSIC_PREFIX)] = item
+
+    artists = {}
+    unmatched = 0
+    for path in plex_paths:
+        item = path_to_item.get(path)
+        artist_id = item and (item.get('mb_albumartistid') or item.get('mb_artistid'))
+        if not artist_id:
+            unmatched += 1
+            continue
+        if artist_id not in artists:
+            artists[artist_id] = {
+                'id': artist_id,
+                'name': item.get('albumartist') or item.get('artist') or artist_id,
+                'track_count': 0,
+            }
+        artists[artist_id]['track_count'] += 1
+
+    logger.info(
+        f'Plex playlist "{title}": {len(plex_paths)} tracks, '
+        f'{len(artists)} artists, {unmatched} unmatched'
+    )
+    return {
+        'title': title,
+        'artists': list(artists.values()),
+        'track_count': len(plex_paths),
+        'unmatched_count': unmatched,
+    }
 
 def build_playlists(artist_ids, name):
     """Build two M3U8 playlists (Plex + Strawberry path variants) of every song

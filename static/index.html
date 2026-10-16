@@ -45,66 +45,70 @@
         <div id="webTab" class="tab-content">
             <div class="web-toolbar">
                 <div class="web-controls">
-                    <label class="web-filter">
-                        Artist:
-                        <input id="artistSearch" class="artist-search" list="artistOptions"
-                               placeholder="Search an artist…" onfocus="this.value=''" onchange="onArtistSearch()">
-                        <datalist id="artistOptions"></datalist>
-                    </label>
+                    <input id="artistSearch" class="artist-search" list="artistOptions"
+                           placeholder="Pick an artist" autocomplete="off" onchange="onArtistSearch()">
+                    <datalist id="artistOptions"></datalist>
                     <label class="web-filter">
                         Min shared:
                         <select id="minSharedFilter" onchange="applyGraphFilter()">
-                            <option value="1">1</option>
-                            <option value="2" selected>2</option>
+                            <option value="1" selected>1</option>
+                            <option value="2">2</option>
                             <option value="3">3</option>
                             <option value="4">4</option>
                         </select>
                     </label>
                     <label class="web-filter">
                         Neighbors:
-                        <select id="maxNeighborsFilter" onchange="renderGraph()">
+                        <select id="maxNeighborsFilter" onchange="renderGraph(); renderExplore(); renderPlaylist()">
                             <option value="8">8</option>
                             <option value="12" selected>12</option>
                             <option value="16">16</option>
                             <option value="24">24</option>
                         </select>
                     </label>
-                    <button class="update-btn" onclick="refreshArtistGenres()">Fetch genres from MusicBrainz</button>
-                    <button class="update-btn" onclick="createPlaylist()">Create playlist</button>
+                    <button class="update-btn modal-secondary" onclick="refreshArtistGenres()">Fetch genres</button>
                 </div>
                 <div class="web-legend">
-                    <span class="legend-item"><span class="legend-dot status-complete-dot"></span>Complete</span>
-                    <span class="legend-item"><span class="legend-dot status-partial-dot"></span>Partial</span>
-                    <span class="legend-item"><span class="legend-dot status-missing-dot"></span>Missing</span>
+                    <span class="legend-item">Shared genres: 1
+                        <span id="sharedLegendBar" class="legend-bar"></span>
+                        <span id="sharedLegendMax">1</span></span>
+                    <span class="legend-item"><span class="legend-ring"></span>In playlist</span>
                     <span class="web-stats" id="webStats"></span>
                 </div>
             </div>
             <div id="webEmpty" class="web-empty" style="display: none;"></div>
-            <div class="web-graph-wrap">
-                <svg id="webGraph" class="web-graph"></svg>
-                <div id="artistPanel" class="artist-panel" style="display: none;"></div>
+            <div class="web-layout">
+                <div class="web-graph-wrap">
+                    <svg id="webGraph" class="web-graph"></svg>
+                    <div id="webHint" class="web-hint" style="display: none;">
+                        Pick a starting artist from the search box.
+                    </div>
+                    <div class="web-graph-tip">Click to explore · Shift-click to add · Drag to pan</div>
+                </div>
+                <aside class="web-side">
+                    <section id="explorePane" class="side-card explore-pane"></section>
+                    <section class="side-card playlist-pane">
+                        <div class="pane-head">
+                            <h3>Playlist <span class="pane-count" id="playlistCount">0</span></h3>
+                            <span class="pane-actions">
+                                <button class="modal-link-btn" onclick="openPlexModal()">Load from Plex</button>
+                                <button class="modal-link-btn" onclick="clearPlaylist()">Clear</button>
+                            </span>
+                        </div>
+                        <input type="text" id="playlistName" class="modal-input" placeholder="Playlist name"
+                               autocomplete="off" oninput="onPlaylistNameInput(this.value)">
+                        <ul id="playlistList" class="similar-list playlist-list"></ul>
+                        <button id="playlistCreateBtn" class="update-btn" onclick="createPlaylist()" disabled>Create playlist</button>
+                    </section>
+                </aside>
             </div>
         </div>
     </main>
 
-    <div id="playlistModal" class="modal-overlay" style="display: none;">
+    <div id="plexModal" class="modal-overlay" style="display: none;" onclick="if(event.target===this)closePlexModal()">
         <div class="modal-content">
-            <button class="modal-close" onclick="closePlaylistModal()" title="Close">×</button>
-            <h3>Create playlist</h3>
-            <label class="modal-field-label" for="playlistName">Playlist name</label>
-            <input type="text" id="playlistName" class="modal-input" autocomplete="off">
-            <div class="panel-section-title">
-                Artists (<span id="playlistArtistCount">0</span> selected)
-                <span class="modal-select-actions">
-                    <button type="button" class="modal-link-btn" onclick="togglePlaylistArtists(true)">All</button>
-                    <button type="button" class="modal-link-btn" onclick="togglePlaylistArtists(false)">None</button>
-                </span>
-            </div>
-            <ul id="playlistArtistList" class="playlist-artist-list"></ul>
-            <div class="modal-actions">
-                <button class="update-btn modal-secondary" onclick="closePlaylistModal()">Cancel</button>
-                <button id="playlistCreateBtn" class="update-btn" onclick="confirmCreatePlaylist()">Create playlist</button>
-            </div>
+            <button class="modal-close" onclick="closePlexModal()" title="Close">×</button>
+            <div id="plexModalBody"></div>
         </div>
     </div>
 
