@@ -3,26 +3,33 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Beets Monitor - Music Catalog</title>
+    <title>Beets Monitor</title>
     <link rel="stylesheet" href="index.css">
     <link rel="icon" href="favicon.png">
 </head>
 <body>
-    <div class="catalog-container">
-        <div class="header">
-            <h1>Beets Monitor - Music Catalog</h1>
-            <div class="track-stats" id="trackStats"></div>
-            <div class="button-group">
+    <header class="topbar">
+        <div class="topbar-inner">
+            <div class="brand">
+                <svg class="brand-logo" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3.2" class="brand-hole"/></svg>
+                <div>
+                    <h1>Beets Monitor</h1>
+                    <div class="brand-sub">Music catalog</div>
+                </div>
+            </div>
+            <nav class="tabs" role="tablist">
+                <button class="tab-btn active" data-tab="catalog" onclick="switchTab('catalog')">Catalog</button>
+                <button class="tab-btn" data-tab="watched" onclick="switchTab('watched')">Watched</button>
+                <button class="tab-btn" data-tab="web" onclick="switchTab('web')">Artist Web</button>
+            </nav>
+            <div class="header-actions">
+                <div class="track-stats" id="trackStats"></div>
                 <button class="update-btn" onclick="updateCatalog()">Update Catalog</button>
             </div>
         </div>
+    </header>
 
-        <div class="tabs">
-            <button class="tab-btn active" data-tab="catalog" onclick="switchTab('catalog')">Catalog</button>
-            <button class="tab-btn" data-tab="watched" onclick="switchTab('watched')">Watched Albums</button>
-            <button class="tab-btn" data-tab="web" onclick="switchTab('web')">Artist Web</button>
-        </div>
-
+    <main class="catalog-container">
         <div id="loading" class="loading">Loading catalog...</div>
         <div id="error" class="error" style="display: none;"></div>
         <div id="toast-container"></div>
@@ -78,7 +85,7 @@
                 <div id="artistPanel" class="artist-panel" style="display: none;"></div>
             </div>
         </div>
-    </div>
+    </main>
 
     <div id="playlistModal" class="modal-overlay" style="display: none;">
         <div class="modal-content">
