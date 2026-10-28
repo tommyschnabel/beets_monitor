@@ -5,14 +5,14 @@ let watchedAlbums = [];
 window.onload = () => {
     loadCatalog();
     const initialTab = location.hash.replace('#', '') || 'catalog';
-    if (['catalog', 'watched', 'web'].includes(initialTab)) {
+    if (['catalog', 'watched', 'recent', 'web'].includes(initialTab)) {
         switchTab(initialTab, false);
     }
 };
 
 window.addEventListener('popstate', () => {
     const tabName = location.hash.replace('#', '') || 'catalog';
-    if (['catalog', 'watched', 'web'].includes(tabName)) {
+    if (['catalog', 'watched', 'recent', 'web'].includes(tabName)) {
         switchTab(tabName, false);
     }
 });
@@ -90,6 +90,7 @@ async function loadCatalogInternal() {
         }
 
         renderCatalog();
+        renderRecent();
 
     } catch (error) {
         console.error('Error loading catalog:', error);
@@ -159,6 +160,8 @@ function switchTab(tabName, pushState = true) {
     // Load data for the selected tab
     if (tabName === 'watched') {
         loadWatchedAlbums();
+    } else if (tabName === 'recent') {
+        loadRecent();
     } else if (tabName === 'web') {
         loadArtistGraph();
     }
@@ -424,6 +427,7 @@ async function toggleWatchedAlbum(albumId) {
 
             // Update local watched albums list
             watchedAlbums = watchedAlbums.filter(id => id !== albumId);
+            renderRecent();
             showToast('Album removed from watch list', 'success');
             
             // Re-render the current artist's releases to update star icons
@@ -461,6 +465,7 @@ async function toggleWatchedAlbum(albumId) {
 
             // Update local watched albums list
             watchedAlbums.push(albumId);
+            renderRecent();
             showToast('Album added to watch list', 'success');
             
             // Re-render the current artist's releases to update star icons
@@ -790,6 +795,98 @@ async function removeRelease(albumId) {
         console.error('Error removing release:', error);
         showToast(`Error removing release: ${error.message}`, 'error');
     }
+}
+
+/* ==================== Recent releases ==================== */
+
+let recentRange = '90';
+
+async function loadRecent() {
+    try {
+        const response = await fetch('/watch_albums');
+        if (response.ok) watchedAlbums = (await response.json()).watch_albums || watchedAlbums;
+    } catch (e) { /* stars just show stale state */ }
+    if (!catalogData && catalogPromise) await catalogPromise;
+    renderRecent();
+}
+
+function setRecentRange(range) {
+    recentRange = range;
+    renderRecent();
+}
+
+// MusicBrainz dates may be YYYY, YYYY-MM or YYYY-MM-DD; pad to a full date.
+function fullDate(date) {
+    const [y, m = '01', d = '01'] = date.split('-');
+    return `${y}-${m}-${d}`;
+}
+
+function renderRecent() {
+    const list = document.getElementById('recentList');
+    if (!list || !catalogData) return;
+
+    document.querySelectorAll('.recent-range button').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.range === recentRange);
+    });
+
+    const rows = [];
+    for (const [artistId, artistData] of Object.entries(catalogData)) {
+        for (const [rgId, rg] of Object.entries(artistData.release_groups || {})) {
+            rows.push({
+                artistId,
+                artistName: artistData.name,
+                rgId,
+                title: rg.title,
+                date: (rg.data && rg.data.date) || '',
+                status: rg.status || 'missing',
+            });
+        }
+    }
+
+    let shown = rows;
+    if (recentRange === '90') {
+        const cutoff = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+        shown = rows.filter(r => r.date && fullDate(r.date) >= cutoff);
+    }
+    // Newest first; undated albums sink to the bottom.
+    shown.sort((a, b) => (b.date || '').localeCompare(a.date || '') || a.artistName.localeCompare(b.artistName));
+
+    document.getElementById('recentCount').textContent =
+        `${shown.length} album${shown.length === 1 ? '' : 's'}`;
+
+    if (shown.length === 0) {
+        list.innerHTML = '<li class="recent-empty">No releases in the last 90 days</li>';
+        return;
+    }
+
+    list.innerHTML = shown.map(r => {
+        const isWatched = watchedAlbums.includes(r.rgId);
+        return `
+            <li class="release-item recent-item status-${r.status}-row">
+                <div class="release-header">
+                    <div class="recent-date">${escapeHtml(r.date || '—')}</div>
+                    <div class="recent-main">
+                        <div class="release-title">${escapeHtml(r.title)}</div>
+                        <div class="recent-artist">${escapeHtml(r.artistName)}</div>
+                    </div>
+                    <div class="release-controls">
+                        <div class="release-status"><span class="${getStatusClass(r.status)}">${r.status}</span></div>
+                        <div class="tooltip">
+                            <button class="search-btn" data-query="${escapeHtml(`${r.artistName} ${r.title}`)}" onclick="slskdSearch(this.dataset.query)">⌕</button>
+                            <span class="tooltiptext">Search slskd for this album</span>
+                        </div>
+                        <div class="tooltip">
+                            <button class="${isWatched ? 'star-btn watched' : 'star-btn'}" onclick="toggleWatchedAlbum('${r.rgId}')">${isWatched ? '★' : '☆'}</button>
+                            <span class="tooltiptext">${isWatched ? 'Remove from watch list' : 'Add to watch list'}</span>
+                        </div>
+                        <div class="tooltip">
+                            <button class="remove-btn" onclick="removeRelease('${r.rgId}')">×</button>
+                            <span class="tooltiptext">Remove this album from tracking</span>
+                        </div>
+                    </div>
+                </div>
+            </li>`;
+    }).join('');
 }
 
 /* ==================== Artist Web (playlist builder) ==================== */
