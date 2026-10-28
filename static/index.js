@@ -820,9 +820,9 @@ let playlist = loadSavedPlaylist();
 function loadSavedPlaylist() {
     try {
         const saved = JSON.parse(localStorage.getItem(PLAYLIST_STORAGE_KEY));
-        if (saved && Array.isArray(saved.ids)) return { ids: saved.ids, name: saved.name || '' };
+        if (saved && Array.isArray(saved.ids)) return { ids: saved.ids, name: saved.name || '', nameAuto: !!saved.nameAuto };
     } catch (e) { /* storage unavailable or corrupt */ }
-    return { ids: [], name: '' };
+    return { ids: [], name: '', nameAuto: false };
 }
 
 function savePlaylist() {
@@ -1016,6 +1016,7 @@ function togglePlaylistArtist(artistId) {
         playlist.ids = playlist.ids.filter(id => id !== artistId);
     } else {
         playlist.ids.push(artistId);
+        prefillPlaylistName();
     }
     onPlaylistChanged();
 }
@@ -1023,6 +1024,7 @@ function togglePlaylistArtist(artistId) {
 function addArtistsToPlaylist(artistIds) {
     const before = playlist.ids.length;
     artistIds.forEach(id => { if (!inPlaylist(id)) playlist.ids.push(id); });
+    prefillPlaylistName();
     const added = playlist.ids.length - before;
     showToast(added ? `Added ${added} artist${added === 1 ? '' : 's'}` : 'All already in playlist', 'success');
     onPlaylistChanged();
@@ -1031,11 +1033,28 @@ function addArtistsToPlaylist(artistIds) {
 function clearPlaylist() {
     if (playlist.ids.length && !confirm('Remove all artists from the playlist?')) return;
     playlist.ids = [];
+    if (playlist.nameAuto) {
+        playlist.name = '';
+        document.getElementById('playlistName').value = '';
+    }
     onPlaylistChanged();
+}
+
+// Name a fresh playlist after its first artist, unless the user (or a Plex
+// import) already chose a name.
+function prefillPlaylistName() {
+    if (playlist.ids.length === 0) return;
+    if (playlist.name.trim() && !playlist.nameAuto) return;
+    const first = graphNodeById[playlist.ids[0]];
+    if (!first) return;
+    playlist.name = `${first.name} & Similar`;
+    playlist.nameAuto = true;
+    document.getElementById('playlistName').value = playlist.name;
 }
 
 function onPlaylistNameInput(value) {
     playlist.name = value;
+    playlist.nameAuto = false;
     savePlaylist();
 }
 
@@ -1210,8 +1229,9 @@ function updatePlexSelectedCount() {
 function addPlexArtists() {
     const ids = checkedPlexArtistIds();
     if (ids.length === 0) return;
-    if (playlist.ids.length === 0 || !playlist.name.trim()) {
+    if (playlist.ids.length === 0 || !playlist.name.trim() || playlist.nameAuto) {
         playlist.name = plexPreview.title;
+        playlist.nameAuto = false;
         document.getElementById('playlistName').value = plexPreview.title;
     }
     closePlexModal();
