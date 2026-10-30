@@ -430,9 +430,13 @@ h1 {
     display: inline-flex;
 }
 
-.tooltip .tooltiptext {
-    visibility: hidden;
-    opacity: 0;
+.tooltip .tooltiptext { display: none; }
+
+#global-tooltip {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 1200;
     width: max-content;
     max-width: 200px;
     background: var(--surface-3);
@@ -441,20 +445,13 @@ h1 {
     text-align: center;
     border-radius: 6px;
     padding: 5px 9px;
-    position: absolute;
-    z-index: 10;
-    bottom: calc(100% + 6px);
-    left: 50%;
-    transform: translateX(-50%);
     box-shadow: var(--shadow);
     pointer-events: none;
+    opacity: 0;
     transition: opacity 0.15s;
 }
 
-.tooltip:hover .tooltiptext {
-    visibility: visible;
-    opacity: 1;
-}
+#global-tooltip.visible { opacity: 1; }
 
 /* ---------- Toasts ---------- */
 #toast-container {

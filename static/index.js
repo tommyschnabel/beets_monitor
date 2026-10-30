@@ -1783,3 +1783,36 @@ function escapeHtml(str) {
 function escapeAttr(str) {
     return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
 }
+
+// Tooltips render in a single fixed element so row overflow can't clip them
+(function initTooltips() {
+    const tip = document.createElement('div');
+    tip.id = 'global-tooltip';
+    const attach = () => document.body.appendChild(tip);
+    if (document.body) attach(); else document.addEventListener('DOMContentLoaded', attach);
+
+    let current = null;
+    const hide = () => { current = null; tip.classList.remove('visible'); };
+
+    document.addEventListener('mouseover', e => {
+        const el = e.target.closest('.tooltip');
+        if (!el || el === current) return;
+        const text = el.querySelector('.tooltiptext')?.textContent.trim();
+        if (!text) return hide();
+        current = el;
+        tip.textContent = text;
+        const r = el.getBoundingClientRect();
+        const t = tip.getBoundingClientRect();
+        let top = r.top - t.height - 6;
+        if (top < 4) top = r.bottom + 6;
+        const left = Math.min(Math.max(4, r.left + r.width / 2 - t.width / 2), window.innerWidth - t.width - 4);
+        tip.style.top = `${top}px`;
+        tip.style.left = `${left}px`;
+        tip.classList.add('visible');
+    });
+    document.addEventListener('mouseout', e => {
+        if (current && !current.contains(e.relatedTarget)) hide();
+    });
+    document.addEventListener('scroll', hide, true);
+    document.addEventListener('click', hide);
+})();
