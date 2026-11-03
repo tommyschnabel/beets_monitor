@@ -1295,7 +1295,7 @@ async function loadPlexPlaylist(playlistId) {
             ${unmatched}
             <div class="modal-actions">
                 <button class="update-btn modal-secondary" onclick="closePlexModal()">Cancel</button>
-                <button id="plexAddBtn" class="update-btn" onclick="addPlexArtists()">Add to playlist</button>
+                <button id="plexAddBtn" class="update-btn" onclick="addPlexArtists()">Load playlist</button>
             </div>`;
         updatePlexSelectedCount();
     } catch (error) {
@@ -1321,16 +1321,15 @@ function updatePlexSelectedCount() {
     document.getElementById('plexAddBtn').disabled = count === 0;
 }
 
-// Add the checked artists, adopt the Plex name for a fresh playlist, and
+// Replace the playlist with the checked artists, adopt the Plex name, and
 // start exploring from the first artist.
 function addPlexArtists() {
     const ids = checkedPlexArtistIds();
     if (ids.length === 0) return;
-    if (playlist.ids.length === 0 || !playlist.name.trim() || playlist.nameAuto) {
-        playlist.name = plexPreview.title;
-        playlist.nameAuto = false;
-        document.getElementById('playlistName').value = plexPreview.title;
-    }
+    playlist.ids = [];
+    playlist.name = plexPreview.title;
+    playlist.nameAuto = false;
+    document.getElementById('playlistName').value = plexPreview.title;
     closePlexModal();
     addArtistsToPlaylist(ids);
     focusArtist(ids[0]);
