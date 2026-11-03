@@ -57,9 +57,13 @@
         <div id="webTab" class="tab-content">
             <div class="web-toolbar">
                 <div class="web-controls">
-                    <input id="artistSearch" class="artist-search" list="artistOptions"
-                           placeholder="Pick an artist" autocomplete="off" onchange="onArtistSearch()">
-                    <datalist id="artistOptions"></datalist>
+                    <div class="artist-picker">
+                        <input id="artistSearch" class="artist-search" placeholder="Pick an artist" autocomplete="off"
+                               role="combobox" aria-expanded="false" aria-controls="artistOptions"
+                               onfocus="this.value = ''; openArtistPicker()" oninput="openArtistPicker()"
+                               onblur="closeArtistPicker()" onkeydown="onArtistPickerKey(event)">
+                        <ul id="artistOptions" class="artist-options" role="listbox" style="display: none;"></ul>
+                    </div>
                     <label class="web-filter">
                         Min shared:
                         <select id="minSharedFilter" onchange="applyGraphFilter()">

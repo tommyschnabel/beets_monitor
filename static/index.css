@@ -537,7 +537,36 @@ h1 {
 }
 
 .web-filter select { cursor: pointer; }
-.artist-search { min-width: 200px; }
+.artist-picker { position: relative; }
+.artist-search { width: 320px; }
+
+.artist-options {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 50;
+    width: 420px;
+    max-width: calc(100vw - 32px);
+    max-height: 60vh;
+    margin: 0;
+    padding: 4px;
+    list-style: none;
+    overflow-y: auto;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow);
+}
+
+.artist-options li[role="option"] {
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.artist-options li[role="option"]:hover,
+.artist-options li[role="option"].active { background: var(--surface-2); }
 
 .web-filter select:focus,
 .artist-search:focus,
@@ -1046,7 +1075,8 @@ h1 {
     .artist-status span:first-child,
     .release-status span:first-child { margin-left: 0; }
 
-    .artist-search { min-width: 0; width: 100%; }
+    .artist-picker,
+    .artist-search { width: 100%; }
 }
 
 /* ---------- Recent releases ---------- */

@@ -969,7 +969,6 @@ async function loadArtistGraph() {
             return;
         }
 
-        populateArtistDatalist();
 
         if (focusArtistId && !graphNodeById[focusArtistId]) {
             focusArtistId = null;
@@ -986,24 +985,63 @@ async function loadArtistGraph() {
     }
 }
 
-function populateArtistDatalist() {
-    const datalist = document.getElementById('artistOptions');
-    const names = artistGraph.nodes.map(n => n.name).sort((a, b) => a.localeCompare(b));
-    datalist.innerHTML = names.map(name => `<option value="${escapeHtml(name)}"></option>`).join('');
+// Artist picker: the options currently shown and the keyboard-highlighted one.
+let artistPickerMatches = [];
+let artistPickerIndex = -1;
+
+function openArtistPicker() {
+    const input = document.getElementById('artistSearch');
+    const list = document.getElementById('artistOptions');
+    const value = input.value.trim().toLowerCase();
+    artistPickerMatches = artistGraph.nodes
+        .filter(n => n.name.toLowerCase().includes(value))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    artistPickerIndex = value && artistPickerMatches.length ? 0 : -1;
+    list.innerHTML = artistPickerMatches.length
+        ? artistPickerMatches.map((n, i) => `
+            <li role="option" onmousedown="event.preventDefault(); pickArtist(${i})">${escapeHtml(n.name)}</li>`).join('')
+        : '<li class="pane-empty">No matching artists.</li>';
+    list.style.display = 'block';
+    list.scrollTop = 0;
+    input.setAttribute('aria-expanded', 'true');
+    highlightArtistOption();
 }
 
-function onArtistSearch() {
+function closeArtistPicker() {
+    document.getElementById('artistOptions').style.display = 'none';
+    document.getElementById('artistSearch').setAttribute('aria-expanded', 'false');
+}
+
+function highlightArtistOption() {
+    const options = document.querySelectorAll('#artistOptions li[role="option"]');
+    options.forEach((li, i) => li.classList.toggle('active', i === artistPickerIndex));
+    options[artistPickerIndex]?.scrollIntoView({ block: 'nearest' });
+}
+
+function pickArtist(index) {
+    const match = artistPickerMatches[index];
+    if (!match) return;
     const input = document.getElementById('artistSearch');
-    const value = input.value.trim().toLowerCase();
-    if (!value) return;
-    const match = artistGraph.nodes.find(n => n.name.toLowerCase() === value)
-        || artistGraph.nodes.find(n => n.name.toLowerCase().includes(value));
-    if (match) {
-        focusArtist(match.id);
-        input.value = '';
-        input.blur();
-    } else {
-        showToast(`No artist matching “${value}” in the web`, 'error');
+    focusArtist(match.id);
+    input.value = '';
+    input.blur();
+}
+
+function onArtistPickerKey(event) {
+    const count = artistPickerMatches.length;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        if (!count) return;
+        const step = event.key === 'ArrowDown' ? 1 : -1;
+        artistPickerIndex = artistPickerIndex === -1 && step === -1
+            ? count - 1
+            : (artistPickerIndex + step + count) % count;
+        highlightArtistOption();
+    } else if (event.key === 'Enter') {
+        event.preventDefault();
+        pickArtist(artistPickerIndex);
+    } else if (event.key === 'Escape') {
+        event.target.blur();
     }
 }
 
